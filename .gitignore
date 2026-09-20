@@ -1,0 +1,20 @@
+	# Environment / secrets
+.env
+
+# User-uploaded files
+uploads/avatars/*
+!uploads/avatars/.htaccess
+
+uploads/logo/*
+!uploads/logo/.htaccess
+
+# Logs
+*.log
+
+# Temporary files
+temp/
+cache/
+
+# OS files
+.DS_Store
+Thumbs.db

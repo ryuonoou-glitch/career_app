@@ -1,0 +1,417 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2800 1560" width="2800" height="1560" style="background:#ffffff; font-family: Arial, Helvetica, sans-serif;">
+  <defs>
+    <!-- Standard Flowchart Arrow Marker -->
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#000000" />
+    </marker>
+  </defs>
+
+  <style>
+    .symbol-title { font-size: 15px; font-weight: bold; fill: #000000; text-anchor: middle; dominant-baseline: middle; }
+    .symbol-text { font-size: 13px; fill: #000000; text-anchor: middle; dominant-baseline: middle; }
+    .symbol-subtext { font-size: 11px; fill: #000000; text-anchor: middle; dominant-baseline: middle; }
+    .branch-label { font-size: 13px; font-weight: bold; fill: #000000; }
+    .header-main { font-size: 20px; font-weight: bold; fill: #000000; text-anchor: middle; }
+    .header-sub { font-size: 13px; fill: #000000; text-anchor: middle; }
+    .subsystem-header { font-size: 13px; font-weight: bold; fill: #000000; letter-spacing: 0.5px; }
+    .legend-text { font-size: 12px; fill: #000000; dominant-baseline: middle; }
+    rect.process { fill: #ffffff; stroke: #000000; stroke-width: 1.8px; }
+    polygon.decision { fill: #ffffff; stroke: #000000; stroke-width: 1.8px; }
+    rect.terminator { fill: #ffffff; stroke: #000000; stroke-width: 1.8px; rx: 25px; ry: 25px; }
+    line.flow, path.flow { fill: none; stroke: #000000; stroke-width: 1.8px; }
+    rect.subsystem { fill: none; stroke: #000000; stroke-width: 1.2px; stroke-dasharray: 6,4; }
+  </style>
+
+  <!-- ==================== HEADER & TITLE BLOCK ==================== -->
+  <text x="1400" y="38" class="header-main">CAREERPATH: COMPREHENSIVE SYSTEM FLOWCHART</text>
+  <text x="1400" y="58" class="header-sub">Appendix E — Capstone Thesis Technical System Flow Documentation (Landscape)</text>
+
+  <!-- ==================== FORMAL LEGEND BLOCK (TOP-LEFT) ==================== -->
+  <g id="legend">
+    <rect x="60" y="15" width="580" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.2px" />
+    <text x="75" y="32" font-size="11px" font-weight="bold" fill="#000000">ANSI / ISO FLOWCHART SYMBOL LEGEND:</text>
+    
+    <!-- Oval: Terminator -->
+    <rect x="75" y="42" width="46" height="22" class="terminator" rx="11" ry="11" />
+    <text x="130" y="54" class="legend-text">Terminator (Start / End)</text>
+
+    <!-- Rectangle: Process -->
+    <rect x="260" y="42" width="44" height="22" class="process" />
+    <text x="312" y="54" class="legend-text">Process</text>
+
+    <!-- Diamond: Decision -->
+    <polygon points="415,53 430,42 445,53 430,64" class="decision" />
+    <text x="455" y="54" class="legend-text">Decision</text>
+
+    <!-- Arrow: Flowline -->
+    <line x1="535" y1="53" x2="565" y2="53" class="flow" marker-end="url(#arrow)" />
+    <text x="575" y="54" class="legend-text">Flowline</text>
+  </g>
+
+  <!-- ==================== FORMAL DOCUMENT METADATA (TOP-RIGHT) ==================== -->
+  <g id="doc-meta">
+    <rect x="2260" y="15" width="480" height="60" fill="#ffffff" stroke="#000000" stroke-width="1.2px" />
+    <text x="2275" y="33" font-size="11px" font-weight="bold" fill="#000000">DOCUMENT SPECIFICATION:</text>
+    <text x="2275" y="50" font-size="11px" fill="#000000">Platform: Web &amp; Mobile Senior High School Career Guidance</text>
+    <text x="2275" y="65" font-size="11px" fill="#000000">Architecture: 3-Tier Multi-Role System Flow (Student / Admin / Counselor)</text>
+  </g>
+
+  <!-- ==================== MAIN TOP FLOW (AUTHENTICATION & DISPATCH) ==================== -->
+
+  <!-- START -->
+  <rect x="1320" y="95" width="160" height="48" class="terminator" />
+  <text x="1400" y="120" class="symbol-title">Start</text>
+
+  <!-- Flow: Start -> Open Application -->
+  <line x1="1400" y1="143" x2="1400" y2="175" class="flow" marker-end="url(#arrow)" />
+
+  <!-- OPEN APPLICATION -->
+  <rect x="1240" y="175" width="320" height="52" class="process" />
+  <text x="1400" y="193" class="symbol-title">Open Application</text>
+  <text x="1400" y="212" class="symbol-subtext">(Website / Mobile App)</text>
+
+  <!-- Flow: Open Application -> Login / Registration -->
+  <line x1="1400" y1="227" x2="1400" y2="260" class="flow" marker-end="url(#arrow)" />
+
+  <!-- LOGIN / REGISTRATION -->
+  <rect x="1250" y="260" width="300" height="52" class="process" id="box-login" />
+  <text x="1400" y="287" class="symbol-title">Login / Registration</text>
+
+  <!-- Flow: Login -> Valid Credentials? -->
+  <line x1="1400" y1="312" x2="1400" y2="350" class="flow" marker-end="url(#arrow)" />
+
+  <!-- DECISION: VALID CREDENTIALS? -->
+  <polygon points="1400,350 1540,400 1400,450 1260,400" class="decision" />
+  <text x="1400" y="394" class="symbol-title">Valid</text>
+  <text x="1400" y="412" class="symbol-title">Credentials?</text>
+
+  <!-- Branch NO: -> Show Error Message -> Return to Login -->
+  <line x1="1540" y1="400" x2="1710" y2="400" class="flow" marker-end="url(#arrow)" />
+  <text x="1565" y="390" class="branch-label">No</text>
+
+  <rect x="1710" y="375" width="210" height="50" class="process" />
+  <text x="1815" y="401" class="symbol-title">Show Error Message</text>
+
+  <!-- Loop back to Login/Registration -->
+  <path d="M 1815,375 L 1815,286 L 1550,286" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Branch YES: -> Identify User Role -->
+  <line x1="1400" y1="450" x2="1400" y2="495" class="flow" marker-end="url(#arrow)" />
+  <text x="1412" y="475" class="branch-label">Yes</text>
+
+  <!-- DECISION: IDENTIFY USER ROLE -->
+  <polygon points="1400,495 1550,545 1400,595 1250,545" class="decision" />
+  <text x="1400" y="539" class="symbol-title">Identify</text>
+  <text x="1400" y="557" class="symbol-title">User Role</text>
+
+
+  <!-- ==================== THREE SIDE-BY-SIDE SUBSYSTEM BRANCHES ==================== -->
+
+  <!-- Branch to Student (Left) -->
+  <path d="M 1250,545 L 480,545 L 480,635" class="flow" marker-end="url(#arrow)" />
+  <text x="830" y="535" class="branch-label">Role = Student</text>
+
+  <!-- Branch to Counselor (Middle) -->
+  <line x1="1400" y1="595" x2="1400" y2="635" class="flow" marker-end="url(#arrow)" />
+  <text x="1412" y="618" class="branch-label">Role = Counselor</text>
+
+  <!-- Branch to Admin (Right) -->
+  <path d="M 1550,545 L 2320,545 L 2320,635" class="flow" marker-end="url(#arrow)" />
+  <text x="1940" y="535" class="branch-label">Role = Admin</text>
+
+
+  <!-- ========================================================================= -->
+  <!-- 1. STUDENT BRANCH (LEFT COLUMN: X = 60 to 900, Width = 840)              -->
+  <!-- ========================================================================= -->
+
+  <!-- Subsystem Boundary Container -->
+  <rect x="60" y="625" width="840" height="745" class="subsystem" />
+  <rect x="75" y="615" width="180" height="20" fill="#ffffff" stroke="#000000" stroke-width="1px" />
+  <text x="165" y="629" class="subsystem-header" text-anchor="middle">STUDENT BRANCH</text>
+
+  <!-- Student Dashboard -->
+  <rect x="330" y="645" width="300" height="52" class="process" />
+  <text x="480" y="672" class="symbol-title">Student Dashboard</text>
+
+  <!-- Splitter Bus below Student Dashboard -->
+  <line x1="480" y1="697" x2="480" y2="725" class="flow" />
+  <line x1="240" y1="725" x2="680" y2="725" class="flow" />
+
+  <!-- Flow to General Features (Left Sub-column) -->
+  <line x1="240" y1="725" x2="240" y2="750" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Flow to Assessment Process (Right Sub-column) -->
+  <line x1="680" y1="725" x2="680" y2="750" class="flow" marker-end="url(#arrow)" />
+  <text x="680" y="742" class="symbol-subtext" font-weight="bold">Core Assessment Process</text>
+
+  <!-- STUDENT GENERAL FEATURES (Lane A: Center X = 240) -->
+  <!-- View / Edit Profile -->
+  <rect x="100" y="750" width="280" height="48" class="process" />
+  <text x="240" y="775" class="symbol-text">View / Edit Profile</text>
+
+  <line x1="240" y1="798" x2="240" y2="825" class="flow" marker-end="url(#arrow)" />
+
+  <!-- View Recommended Courses -->
+  <rect x="100" y="825" width="280" height="48" class="process" />
+  <text x="240" y="850" class="symbol-text">View Recommended Courses</text>
+
+  <line x1="240" y1="873" x2="240" y2="900" class="flow" marker-end="url(#arrow)" />
+
+  <!-- View Recommended Schools (Pangasinan) -->
+  <rect x="100" y="900" width="280" height="54" class="process" />
+  <text x="240" y="920" class="symbol-text">View Recommended Schools</text>
+  <text x="240" y="938" class="symbol-subtext">(Pangasinan)</text>
+
+  <line x1="240" y1="954" x2="240" y2="980" class="flow" marker-end="url(#arrow)" />
+
+  <!-- View Results History -->
+  <rect x="100" y="980" width="280" height="48" class="process" />
+  <text x="240" y="1005" class="symbol-text">View Saved Results History</text>
+
+  <!-- Collector Line from General Features down to Student Logout -->
+  <path d="M 240,1028 L 240,1230 L 480,1230" class="flow" />
+
+
+  <!-- STUDENT ASSESSMENT PIPELINE (Lane B: Center X = 680) -->
+  <!-- Take Assessment -->
+  <rect x="540" y="750" width="280" height="48" class="process" />
+  <text x="680" y="775" class="symbol-title">Take Assessment</text>
+
+  <line x1="680" y1="798" x2="680" y2="830" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Answer Questions -->
+  <rect x="520" y="830" width="320" height="58" class="process" />
+  <text x="680" y="850" class="symbol-title">Answer Questions</text>
+  <text x="680" y="870" class="symbol-subtext">(RIASEC, Big Five, Skills, Strand)</text>
+
+  <line x1="680" y1="888" x2="680" y2="920" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Calculate Scores -->
+  <rect x="540" y="920" width="280" height="48" class="process" />
+  <text x="680" y="945" class="symbol-title">Calculate Scores</text>
+
+  <line x1="680" y1="968" x2="680" y2="1000" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Save Results -->
+  <rect x="540" y="1000" width="280" height="48" class="process" />
+  <text x="680" y="1025" class="symbol-title">Save Results</text>
+
+  <line x1="680" y1="1048" x2="680" y2="1080" class="flow" marker-end="url(#arrow)" />
+
+  <!-- View Results / Recommendations -->
+  <rect x="530" y="1080" width="300" height="52" class="process" />
+  <text x="680" y="1100" class="symbol-title">View Results / Recommendations</text>
+  <text x="680" y="1118" class="symbol-subtext">(Top Matches &amp; Career Clusters)</text>
+
+  <!-- Collector Line from Assessment Pipeline down to Student Logout -->
+  <path d="M 680,1132 L 680,1230 L 480,1230" class="flow" />
+
+  <!-- Convergence to Student Logout -->
+  <line x1="480" y1="1230" x2="480" y2="1275" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Student Logout -->
+  <rect x="360" y="1275" width="240" height="48" class="process" />
+  <text x="480" y="1300" class="symbol-title">Student Logout</text>
+
+
+  <!-- ========================================================================= -->
+  <!-- 2. COUNSELOR BRANCH (CENTER COLUMN: X = 980 to 1820, Width = 840)         -->
+  <!-- ========================================================================= -->
+
+  <!-- Subsystem Boundary Container -->
+  <rect x="980" y="625" width="840" height="745" class="subsystem" />
+  <rect x="995" y="615" width="195" height="20" fill="#ffffff" stroke="#000000" stroke-width="1px" />
+  <text x="1092" y="629" class="subsystem-header" text-anchor="middle">COUNSELOR BRANCH</text>
+
+  <!-- Counselor Dashboard -->
+  <rect x="1250" y="645" width="300" height="52" class="process" />
+  <text x="1400" y="672" class="symbol-title">Counselor Dashboard</text>
+
+  <!-- Splitter Bus below Counselor Dashboard -->
+  <line x1="1400" y1="697" x2="1400" y2="725" class="flow" />
+  <line x1="1180" y1="725" x2="1620" y2="725" class="flow" />
+
+  <!-- Flow to Column 1 -->
+  <line x1="1180" y1="725" x2="1180" y2="750" class="flow" marker-end="url(#arrow)" />
+  <!-- Flow to Column 2 -->
+  <line x1="1620" y1="725" x2="1620" y2="750" class="flow" marker-end="url(#arrow)" />
+
+  <!-- COUNSELOR MODULES: SUB-COLUMN 1 (Center X = 1180) -->
+  <!-- Manage Students (View/Monitor) -->
+  <rect x="1040" y="750" width="280" height="50" class="process" />
+  <text x="1180" y="768" class="symbol-text">Manage Students</text>
+  <text x="1180" y="786" class="symbol-subtext">(View / Monitor)</text>
+
+  <line x1="1180" y1="800" x2="1180" y2="835" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Manage Assessments (View Results) -->
+  <rect x="1040" y="835" width="280" height="50" class="process" />
+  <text x="1180" y="853" class="symbol-text">Manage Assessments</text>
+  <text x="1180" y="871" class="symbol-subtext">(View Results)</text>
+
+  <line x1="1180" y1="885" x2="1180" y2="920" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Manage Questions (CRUD) -->
+  <rect x="1040" y="920" width="280" height="50" class="process" />
+  <text x="1180" y="938" class="symbol-text">Manage Questions</text>
+  <text x="1180" y="956" class="symbol-subtext">(CRUD)</text>
+
+  <!-- Collector Line from Column 1 down to Counselor Logout -->
+  <path d="M 1180,970 L 1180,1230 L 1400,1230" class="flow" />
+
+
+  <!-- COUNSELOR MODULES: SUB-COLUMN 2 (Center X = 1620) -->
+  <!-- View Student Reports -->
+  <rect x="1480" y="750" width="280" height="50" class="process" />
+  <text x="1620" y="775" class="symbol-text">View Student Reports</text>
+
+  <line x1="1620" y1="800" x2="1620" y2="835" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Counseling Notes/Logs -->
+  <rect x="1480" y="835" width="280" height="50" class="process" />
+  <text x="1620" y="853" class="symbol-text">Counseling Notes / Logs</text>
+  <text x="1620" y="871" class="symbol-subtext">(Student Case Records)</text>
+
+  <line x1="1620" y1="885" x2="1620" y2="920" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Generate Reports (PDF) -->
+  <rect x="1480" y="920" width="280" height="50" class="process" />
+  <text x="1620" y="938" class="symbol-text">Generate Reports (PDF)</text>
+  <text x="1620" y="956" class="symbol-subtext">(Export &amp; Print)</text>
+
+  <!-- Collector Line from Column 2 down to Counselor Logout -->
+  <path d="M 1620,970 L 1620,1230 L 1400,1230" class="flow" />
+
+  <!-- Convergence to Counselor Logout -->
+  <line x1="1400" y1="1230" x2="1400" y2="1275" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Counselor Logout -->
+  <rect x="1280" y="1275" width="240" height="48" class="process" />
+  <text x="1400" y="1300" class="symbol-title">Counselor Logout</text>
+
+
+  <!-- ========================================================================= -->
+  <!-- 3. ADMIN BRANCH (RIGHT COLUMN: X = 1900 to 2740, Width = 840)             -->
+  <!-- ========================================================================= -->
+
+  <!-- Subsystem Boundary Container -->
+  <rect x="1900" y="625" width="840" height="745" class="subsystem" />
+  <rect x="1915" y="615" width="165" height="20" fill="#ffffff" stroke="#000000" stroke-width="1px" />
+  <text x="1997" y="629" class="subsystem-header" text-anchor="middle">ADMIN BRANCH</text>
+
+  <!-- Admin Dashboard -->
+  <rect x="2170" y="645" width="300" height="52" class="process" />
+  <text x="2320" y="672" class="symbol-title">Admin Dashboard</text>
+
+  <!-- Splitter Bus below Admin Dashboard -->
+  <line x1="2320" y1="697" x2="2320" y2="725" class="flow" />
+  <line x1="2110" y1="725" x2="2530" y2="725" class="flow" />
+
+  <!-- Flow to Column 1 -->
+  <line x1="2110" y1="725" x2="2110" y2="750" class="flow" marker-end="url(#arrow)" />
+  <!-- Flow to Column 2 -->
+  <line x1="2530" y1="725" x2="2530" y2="750" class="flow" marker-end="url(#arrow)" />
+
+  <!-- ADMIN MODULES: SUB-COLUMN 1 (Center X = 2110) -->
+  <!-- Manage Students -->
+  <rect x="1980" y="750" width="260" height="44" class="process" />
+  <text x="2110" y="773" class="symbol-text">Manage Students</text>
+
+  <line x1="2110" y1="794" x2="2110" y2="822" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Manage Counselors -->
+  <rect x="1980" y="822" width="260" height="44" class="process" />
+  <text x="2110" y="845" class="symbol-text">Manage Counselors</text>
+
+  <line x1="2110" y1="866" x2="2110" y2="894" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Manage Questions -->
+  <rect x="1980" y="894" width="260" height="44" class="process" />
+  <text x="2110" y="917" class="symbol-text">Manage Questions</text>
+
+  <line x1="2110" y1="938" x2="2110" y2="966" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Manage Courses -->
+  <rect x="1980" y="966" width="260" height="44" class="process" />
+  <text x="2110" y="989" class="symbol-text">Manage Courses</text>
+
+  <line x1="2110" y1="1010" x2="2110" y2="1038" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Manage Schools -->
+  <rect x="1980" y="1038" width="260" height="44" class="process" />
+  <text x="2110" y="1061" class="symbol-text">Manage Schools</text>
+
+  <line x1="2110" y1="1082" x2="2110" y2="1110" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Manage Clusters -->
+  <rect x="1980" y="1110" width="260" height="44" class="process" />
+  <text x="2110" y="1133" class="symbol-text">Manage Clusters</text>
+
+  <!-- Collector Line from Column 1 down to Admin Logout -->
+  <path d="M 2110,1154 L 2110,1230 L 2320,1230" class="flow" />
+
+
+  <!-- ADMIN MODULES: SUB-COLUMN 2 (Center X = 2530) -->
+  <!-- Generate Reports (PDF) -->
+  <rect x="2400" y="750" width="260" height="44" class="process" />
+  <text x="2530" y="773" class="symbol-text">Generate Reports (PDF)</text>
+
+  <line x1="2530" y1="794" x2="2530" y2="822" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Activity Logs -->
+  <rect x="2400" y="822" width="260" height="44" class="process" />
+  <text x="2530" y="845" class="symbol-text">Activity Logs</text>
+
+  <line x1="2530" y1="866" x2="2530" y2="894" class="flow" marker-end="url(#arrow)" />
+
+  <!-- School Year Management -->
+  <rect x="2400" y="894" width="260" height="44" class="process" />
+  <text x="2530" y="917" class="symbol-text">School Year Management</text>
+
+  <line x1="2530" y1="938" x2="2530" y2="966" class="flow" marker-end="url(#arrow)" />
+
+  <!-- System Settings -->
+  <rect x="2400" y="966" width="260" height="44" class="process" />
+  <text x="2530" y="989" class="symbol-text">System Settings</text>
+
+  <line x1="2530" y1="1010" x2="2530" y2="1038" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Backups -->
+  <rect x="2400" y="1038" width="260" height="44" class="process" />
+  <text x="2530" y="1061" class="symbol-text">Backups</text>
+
+  <!-- Collector Line from Column 2 down to Admin Logout -->
+  <path d="M 2530,1082 L 2530,1230 L 2320,1230" class="flow" />
+
+  <!-- Convergence to Admin Logout -->
+  <line x1="2320" y1="1230" x2="2320" y2="1275" class="flow" marker-end="url(#arrow)" />
+
+  <!-- Admin Logout -->
+  <rect x="2200" y="1275" width="240" height="48" class="process" />
+  <text x="2320" y="1300" class="symbol-title">Admin Logout</text>
+
+
+  <!-- ========================================================================= -->
+  <!-- FINAL CONVERGENCE: ALL THREE LOGOUT PATHS CONNECT TO END                   -->
+  <!-- ========================================================================= -->
+
+  <!-- Student Logout Exit Bottom -->
+  <line x1="480" y1="1323" x2="480" y2="1410" class="flow" />
+
+  <!-- Counselor Logout Exit Bottom -->
+  <line x1="1400" y1="1323" x2="1400" y2="1410" class="flow" />
+
+  <!-- Admin Logout Exit Bottom -->
+  <line x1="2320" y1="1323" x2="2320" y2="1410" class="flow" />
+
+  <!-- Horizontal Bus Line uniting all 3 branches -->
+  <line x1="480" y1="1410" x2="2320" y2="1410" class="flow" />
+
+  <!-- Final Arrow leading from Bus down into END Terminator -->
+  <line x1="1400" y1="1410" x2="1400" y2="1465" class="flow" marker-end="url(#arrow)" />
+
+  <!-- END TERMINATOR -->
+  <rect x="1320" y="1465" width="160" height="48" class="terminator" />
+  <text x="1400" y="1490" class="symbol-title">End</text>
+
+</svg>
