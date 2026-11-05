@@ -107,12 +107,11 @@ function handleAddQuestion($mysqli, &$response) {
         case 'skills':
             $table = 'questions_skills';
             $competencyId = mapSkillCategoryToCompetencyId($mysqli, $classificationValue);
-            $skillCategoryId = resolveSkillCategoryId($mysqli, $classificationValue);
             $strandId = (int) ($_POST['strand_id'] ?? 0);
             $strandId = $strandId > 0 ? $strandId : null;
-            $fields = ['question_text', 'competency_id', 'skill_category_id', 'strand_id', 'skill_category', 'question_type', 'difficulty'];
-            $types = 'siiisss';
-            $params = [$text, $competencyId, $skillCategoryId, $strandId, $classificationValue, $type, $difficulty];
+            $fields = ['question_text', 'competency_id', 'strand_id', 'skill_category', 'question_type', 'difficulty'];
+            $types = 'siisss';
+            $params = [$text, $competencyId, $strandId, $classificationValue, $type, $difficulty];
             $strandIdForOptions = $strandId;
             $competencyIdForOptions = $competencyId;
             break;
@@ -143,54 +142,61 @@ function handleAddQuestion($mysqli, &$response) {
         return;
     }
 
-    if (!$stmt->bind_param($types, ...$params)) {
-        $response['message'] = 'Bind error: ' . $stmt->error;
-        $stmt->close();
-        return;
-    }
-
-    if ($stmt->execute()) {
-        $questionId = $mysqli->insert_id;
-
-        if ($type === 'objective' && in_array($category, ['skills', 'strand'], true)) {
-            insertQuestionOptions($mysqli, $category, $questionId, $strandIdForOptions, $competencyIdForOptions);
+    try {
+        if (!$stmt->bind_param($types, ...$params)) {
+            $response['message'] = 'Bind error: ' . $stmt->error;
+            $stmt->close();
+            return;
         }
 
-        // Audit logging
-        $userId = $_SESSION['admin_id'] ?? $_SESSION['counselor_id'] ?? 0;
-        $userType = isset($_SESSION['admin_id']) ? 'admin' : 'counselor';
-        $userTitle = ($userType === 'counselor') ? 'Counselor' : 'Admin';
-        
-        $description = '';
-        switch ($category) {
-            case 'career':
-                $description = "{$userTitle} added a new Career Interest question (Holland Type: {$hollandType})";
-                break;
-            case 'personality':
-                $description = "{$userTitle} added a new Personality question (Big Five trait: {$classificationValue})";
-                break;
-            case 'skills':
-                $description = "{$userTitle} added a new Skills question (Competency: {$classificationValue})";
-                break;
-            case 'strand':
-                $description = "{$userTitle} added a new Strand question (Strand Relevance: {$classificationValue})";
-                break;
+        if ($stmt->execute()) {
+            $questionId = $mysqli->insert_id;
+
+            if ($type === 'objective' && in_array($category, ['skills', 'strand'], true)) {
+                insertQuestionOptions($mysqli, $category, $questionId, $strandIdForOptions, $competencyIdForOptions);
+            }
+
+            // Audit logging
+            $userId = $_SESSION['admin_id'] ?? $_SESSION['counselor_id'] ?? 0;
+            $userType = isset($_SESSION['admin_id']) ? 'admin' : 'counselor';
+            $userTitle = ($userType === 'counselor') ? 'Counselor' : 'Admin';
+            
+            $description = '';
+            switch ($category) {
+                case 'career':
+                    $description = "{$userTitle} added a new Career Interest question (Holland Type: {$hollandType})";
+                    break;
+                case 'personality':
+                    $description = "{$userTitle} added a new Personality question (Big Five trait: {$classificationValue})";
+                    break;
+                case 'skills':
+                    $description = "{$userTitle} added a new Skills question (Competency: {$classificationValue})";
+                    break;
+                case 'strand':
+                    $description = "{$userTitle} added a new Strand question (Strand Relevance: {$classificationValue})";
+                    break;
+            }
+            log_activity($userId, $userType, 'Added Question', $table, $questionId, $description, null, $text);
+
+            $response['success'] = true;
+            $response['message'] = 'Question added successfully';
+            $response['question_id'] = $questionId;
+        } else {
+            $response['message'] = 'Error adding question: ' . $stmt->error;
         }
-        log_activity($userId, $userType, 'Added Question', $table, $questionId, $description, null, $text);
-
-        $response['success'] = true;
-        $response['message'] = 'Question added successfully';
-        $response['question_id'] = $questionId;
-    } else {
-        $response['message'] = 'Error adding question: ' . $stmt->error;
+    } catch (\Throwable $e) {
+        $response['message'] = 'System Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine();
+    } finally {
+        if (isset($stmt) && $stmt) {
+            $stmt->close();
+        }
     }
-
-    $stmt->close();
 }
 
 function handleEditQuestion($mysqli, &$response) {
     $id = intval($_POST['id'] ?? 0);
     $category = $_POST['category'] ?? '';
+    $oldCategory = $_POST['old_category'] ?? $category;
 
     if ($id <= 0 || empty($category)) {
         $response['message'] = 'Invalid question ID or category';
@@ -206,6 +212,17 @@ function handleEditQuestion($mysqli, &$response) {
         return;
     }
 
+    $oldTable = '';
+    switch ($oldCategory) {
+        case 'career': $oldTable = 'questions_career'; break;
+        case 'personality': $oldTable = 'questions_personality'; break;
+        case 'skills': $oldTable = 'questions_skills'; break;
+        case 'strand': $oldTable = 'questions_strand'; break;
+        default:
+            $response['message'] = 'Invalid old category';
+            return;
+    }
+
     $table = '';
     switch ($category) {
         case 'career': $table = 'questions_career'; break;
@@ -219,7 +236,7 @@ function handleEditQuestion($mysqli, &$response) {
 
     // 1. Fetch old question text before updating (for audit logging)
     $oldText = '';
-    $oldQuery = $mysqli->prepare("SELECT question_text FROM {$table} WHERE id = ?");
+    $oldQuery = $mysqli->prepare("SELECT question_text FROM {$oldTable} WHERE id = ?");
     if ($oldQuery) {
         $oldQuery->bind_param('i', $id);
         $oldQuery->execute();
@@ -229,7 +246,7 @@ function handleEditQuestion($mysqli, &$response) {
     }
 
     // 2. Set the old question row to inactive (soft-delete)
-    $deactivateStmt = $mysqli->prepare("UPDATE {$table} SET is_active = 0 WHERE id = ?");
+    $deactivateStmt = $mysqli->prepare("UPDATE {$oldTable} SET is_active = 0 WHERE id = ?");
     $deactivateStmt->bind_param('i', $id);
     if (!$deactivateStmt->execute()) {
         $response['message'] = 'Failed to deactivate old question version';
@@ -269,12 +286,11 @@ function handleEditQuestion($mysqli, &$response) {
 
         case 'skills':
             $competencyId = mapSkillCategoryToCompetencyId($mysqli, $classificationValue);
-            $skillCategoryId = resolveSkillCategoryId($mysqli, $classificationValue);
             $strandId = (int) ($_POST['strand_id'] ?? 0);
             $strandId = $strandId > 0 ? $strandId : null;
-            $fields = ['question_text', 'competency_id', 'skill_category_id', 'strand_id', 'skill_category', 'question_type', 'difficulty'];
-            $types = 'siiisss';
-            $params = [$text, $competencyId, $skillCategoryId, $strandId, $classificationValue, $_POST['type'] ?? 'objective', $difficulty];
+            $fields = ['question_text', 'competency_id', 'strand_id', 'skill_category', 'question_type', 'difficulty'];
+            $types = 'siisss';
+            $params = [$text, $competencyId, $strandId, $classificationValue, $_POST['type'] ?? 'objective', $difficulty];
             $strandIdForOptions = $strandId;
             $competencyIdForOptions = $competencyId;
             break;
@@ -300,33 +316,43 @@ function handleEditQuestion($mysqli, &$response) {
         return;
     }
 
-    $stmt->bind_param($types, ...$params);
-
-    if ($stmt->execute()) {
-        $newQuestionId = $mysqli->insert_id;
-
-        // 4. If objective, insert new options associated with the new question ID (leaving old options intact)
-        $type = $_POST['type'] ?? 'likert';
-        if ($type === 'objective' && in_array($category, ['skills', 'strand'], true)) {
-            insertQuestionOptions($mysqli, $category, $newQuestionId, $strandIdForOptions, $competencyIdForOptions);
+    try {
+        if (!$stmt->bind_param($types, ...$params)) {
+            $response['message'] = 'Bind error: ' . $stmt->error;
+            $stmt->close();
+            return;
         }
 
-        // 5. Audit logging
-        $userId = $_SESSION['admin_id'] ?? $_SESSION['counselor_id'] ?? 0;
-        $userType = isset($_SESSION['admin_id']) ? 'admin' : 'counselor';
-        $userTitle = ($userType === 'counselor') ? 'Counselor' : 'Admin';
-        $categoryName = ucfirst($category);
-        $description = "{$userTitle} edited question #{$id} by creating a new version #{$newQuestionId} in {$categoryName} category";
-        log_activity($userId, $userType, 'Edited Question', $table, $newQuestionId, $description, $oldText, $text);
+        if ($stmt->execute()) {
+            $newQuestionId = $mysqli->insert_id;
 
-        $response['success'] = true;
-        $response['message'] = 'Question updated successfully';
-        $response['new_question_id'] = $newQuestionId;
-    } else {
-        $response['message'] = 'Error inserting new question version: ' . $stmt->error;
+            // 4. If objective, insert new options associated with the new question ID (leaving old options intact)
+            $type = $_POST['type'] ?? 'likert';
+            if ($type === 'objective' && in_array($category, ['skills', 'strand'], true)) {
+                insertQuestionOptions($mysqli, $category, $newQuestionId, $strandIdForOptions, $competencyIdForOptions);
+            }
+
+            // 5. Audit logging
+            $userId = $_SESSION['admin_id'] ?? $_SESSION['counselor_id'] ?? 0;
+            $userType = isset($_SESSION['admin_id']) ? 'admin' : 'counselor';
+            $userTitle = ($userType === 'counselor') ? 'Counselor' : 'Admin';
+            $categoryName = ucfirst($category);
+            $description = "{$userTitle} edited question #{$id} by creating a new version #{$newQuestionId} in {$categoryName} category";
+            log_activity($userId, $userType, 'Edited Question', $table, $newQuestionId, $description, $oldText, $text);
+
+            $response['success'] = true;
+            $response['message'] = 'Question updated successfully';
+            $response['new_question_id'] = $newQuestionId;
+        } else {
+            $response['message'] = 'Error inserting new question version: ' . $stmt->error;
+        }
+    } catch (\Throwable $e) {
+        $response['message'] = 'System Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine();
+    } finally {
+        if (isset($stmt) && $stmt) {
+            $stmt->close();
+        }
     }
-
-    $stmt->close();
 }
 
 function handleDeleteQuestion($mysqli, &$response) {
@@ -410,10 +436,9 @@ function handleGetQuestion($mysqli, &$response) {
         case 'skills':
             $sql = "
                 SELECT qs.*,
-                       COALESCE(sk.name, qs.skill_category, c.name, '') AS classification_value,
+                       COALESCE(qs.skill_category, c.name, '') AS classification_value,
                        c.name AS competency_name
                 FROM questions_skills qs
-                LEFT JOIN skill_categories sk ON qs.skill_category_id = sk.id
                 LEFT JOIN competencies c ON qs.competency_id = c.id
                 WHERE qs.id = ? AND qs.is_active = 1
             ";

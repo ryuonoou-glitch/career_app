@@ -2,9 +2,35 @@
 require_once 'config.php';
 require_once 'system_config.php';
 
-requireLogin();
+// Check if logged in as student OR admin/counselor
+$isStudent = isLoggedIn();
+$isAdminOrCounselor = isset($_SESSION['admin_id']) || isset($_SESSION['counselor_id']);
 
-$student = getCurrentStudent();
+if (!$isStudent && !$isAdminOrCounselor) {
+    redirect('index.php');
+}
+
+// Bypass strictly student-only activity logs here if not a student
+if ($isStudent) {
+    // any student-specific activity logging can go here if needed
+}
+
+$student = null;
+if ($isAdminOrCounselor && isset($_GET['student_id'])) {
+    $stmt = $mysqli->prepare("
+        SELECT s.*, st.name AS strand_name, st.code AS strand_code, sy.year_label AS school_year
+        FROM students s
+        LEFT JOIN strands st ON s.strand_id = st.id
+        LEFT JOIN school_years sy ON s.school_year_id = sy.id
+        WHERE s.id = ?
+    ");
+    $stmt->bind_param("i", $_GET['student_id']);
+    $stmt->execute();
+    $student = $stmt->get_result()->fetch_assoc();
+} else {
+    $student = getCurrentStudent();
+}
+
 $studentName = getStudentDisplayName($student);
 $avatarDataUri = getStudentAvatarUri($student);
 

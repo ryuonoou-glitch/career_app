@@ -11,14 +11,22 @@ require_once __DIR__ . '/../includes/recommendation_scoring.php';
 header('Content-Type: application/json; charset=utf-8');
 
 try {
-    // ── 1. Authentication & Security Check ────────────────────────────────────
-    if (!isset($_SESSION['student_id']) && !isset($_SESSION['student_db_id'])) {
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 1. Authentication & Security Check Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    $rawInput = file_get_contents('php://input');
+    if (empty($rawInput) && !empty($GLOBALS['TEST_MOCK_INPUT'])) {
+        $rawInput = $GLOBALS['TEST_MOCK_INPUT'];
+    }
+    $input = json_decode($rawInput, true);
+
+    $isMobileApi = isset($input['student_id']) && $input['student_id'] > 0;
+    
+    if (!$isMobileApi && !isset($_SESSION['student_id']) && !isset($_SESSION['student_db_id'])) {
         if (ob_get_length()) ob_clean();
         echo json_encode(['error' => 'Unauthorized']);
         exit;
     }
 
-    $studentId = (int)($_SESSION['student_db_id'] ?? 0);
+    $studentId = $isMobileApi ? (int)$input['student_id'] : (int)($_SESSION['student_db_id'] ?? 0);
     if ($studentId <= 0 && !empty($_SESSION['student_id']) && isset($mysqli)) {
         $stmt = $mysqli->prepare("SELECT id FROM students WHERE student_id = ? LIMIT 1");
         if ($stmt) {
@@ -39,7 +47,7 @@ try {
         exit;
     }
 
-    // ── 2. Input Reading ───────────────────────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 2. Input Reading Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     $rawInput = file_get_contents('php://input');
     if (empty($rawInput) && !empty($GLOBALS['TEST_MOCK_INPUT'])) {
         $rawInput = $GLOBALS['TEST_MOCK_INPUT'];
@@ -54,7 +62,7 @@ try {
         exit;
     }
 
-    // ── 3. Intent & Entity Extraction ──────────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 3. Intent & Entity Extraction Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     $lowerMsg = strtolower($message);
     $cleanMsg = preg_replace('/[^\w\s]/', ' ', $lowerMsg);
     $cleanMsg = preg_replace('/\s+/', ' ', $cleanMsg);
@@ -165,6 +173,13 @@ try {
         'social work' => ['Social Work'],
         'biology' => ['Biology'],
         'data science' => ['Data Science'],
+        'engineering' => ['Engineering'],
+        'engineer' => ['Engineering'],
+        'education' => ['Education'],
+        'teacher' => ['Education'],
+        'marine' => ['Marine'],
+        'medical' => ['Medical'],
+        'doctor' => ['Medical'],
         'cybersecurity' => ['Cybersecurity'],
         'artificial intelligence' => ['Artificial Intelligence'],
         'aviation' => ['Aviation'],
@@ -179,7 +194,7 @@ try {
 
     $matchedCourseKeywords = [];
     foreach ($courseDictionary as $term => $searchPhrases) {
-        if (preg_match('/\b' . preg_quote($term, '/') . '\b/i', $message)) {
+        if (preg_match('/(?<!\w)' . preg_quote($term, '/') . '(?!\w)/i', $message)) {
             $isCourseQuery = true;
             foreach ($searchPhrases as $p) {
                 $matchedCourseKeywords[] = $p;
@@ -191,6 +206,17 @@ try {
         if (preg_match('/\bit\b/i', $message)) $matchedCourseKeywords[] = 'Information Technology';
         if (preg_match('/\bcs\b/i', $message)) $matchedCourseKeywords[] = 'Computer Science';
     }
+
+    // Dynamically extract potential topic keywords from the message to search the DB
+    $stopWords = ['school', 'schools', 'college', 'colleges', 'university', 'where', 'what', 'when', 'why', 'how', 'want', 'need', 'like', 'love', 'course', 'courses', 'program', 'programs', 'degree', 'major', 'career', 'job', 'jobs', 'work', 'working', 'good', 'best', 'top', 'recommend', 'suggest', 'please', 'help', 'could', 'would', 'should', 'can', 'will', 'there', 'their', 'they', 'them', 'this', 'that', 'these', 'those', 'which', 'who', 'whom', 'whose', 'about'];
+    $words = str_word_count(strtolower($cleanMsg), 1);
+    foreach ($words as $word) {
+        if (strlen($word) >= 5 && !in_array($word, $stopWords)) {
+            $isCourseQuery = true; // Assume they might be asking for a course based on this topic
+            $matchedCourseKeywords[] = $word;
+        }
+    }
+    
     $matchedCourseKeywords = array_unique($matchedCourseKeywords);
 
     // Dynamically fetch schools from the database
@@ -200,7 +226,7 @@ try {
         if ($schoolDictStmt) {
             while ($sRow = $schoolDictStmt->fetch_assoc()) {
                 $schoolName = $sRow['name'];
-                if (preg_match('/\b' . preg_quote($schoolName, '/') . '\b/i', $message)) {
+                if (preg_match('/(?<!\w)' . preg_quote($schoolName, '/') . '(?!\w)/i', $message)) {
                     $isSchoolQuery = true;
                     $matchedSchoolKeywords[] = $schoolName;
                 }
@@ -219,12 +245,12 @@ try {
     ];
     $matchedLocations = [];
     foreach ($locationKeywords as $loc) {
-        if (preg_match('/\b' . preg_quote($loc, '/') . '\b/i', $message)) {
+        if (preg_match('/(?<!\w)' . preg_quote($loc, '/') . '(?!\w)/i', $message)) {
             $matchedLocations[] = $loc;
         }
     }
 
-    // ── 4. Targeted Relevant-Context Retrieval ─────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 4. Targeted Relevant-Context Retrieval Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
     $studentContextText = "";
     $dbDataText = "";
@@ -268,6 +294,7 @@ try {
             if ($assRow) {
                 $studentHasAssessment = true;
                 $latestAssessmentId = (int)$assRow['id'];
+                $studentPreferredRegion = $assRow['preferred_region'] ?? 'All';
             }
             $assStmt->close();
         }
@@ -295,7 +322,7 @@ try {
         }
     }
 
-    // ── Build Student Assessment Context (Only when relevant) ──────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Build Student Assessment Context (Only when relevant) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     $isAssessmentContextNeeded = $isAssessmentQuery 
         || (empty($matchedCourseKeywords) && empty($matchedSchoolKeywords) && !$isSchoolQuery && !$isCourseQuery)
         || stripos($lowerMsg, 'my course') !== false
@@ -381,6 +408,41 @@ try {
                     $studentContextText .= "Official Explanation: {$topC['explanation']}\n\n";
                 }
             }
+
+            // Student's Open-Ended Answers (Removed to save token consumption)
+            /*
+            $openEndedStmt = $mysqli->prepare("
+                SELECT 'Career' AS category, qc.question_text, sa.open_answer 
+                FROM student_answers sa 
+                JOIN questions_career qc ON sa.question_id = qc.id AND sa.question_type = 'career'
+                WHERE sa.assessment_id = ? AND sa.open_answer IS NOT NULL AND sa.open_answer != ''
+            ");
+            if ($openEndedStmt) {
+                $openEndedStmt->bind_param('i', $latestAssessmentId);
+                $openEndedStmt->execute();
+                $openEndedRes = $openEndedStmt->get_result();
+                $hasOpenEnded = false;
+                $openText = "Student's Open-Ended Self-Reflection Answers:\n";
+                while ($oa = $openEndedRes->fetch_assoc()) {
+                    $hasOpenEnded = true;
+                    // Decode if it happens to be JSON
+                    $answerText = $oa['open_answer'];
+                    $decoded = @json_decode($answerText, true);
+                    if (is_array($decoded) && isset($decoded['text'])) {
+                        $answerText = $decoded['text'];
+                    } elseif (is_array($decoded)) {
+                        $answerText = json_encode($decoded);
+                    }
+                    $openText .= "- [{$oa['category']}] Q: \"{$oa['question_text']}\"\n  A: \"{$answerText}\"\n";
+                }
+                $openText .= "\n";
+                $openEndedStmt->close();
+
+                if ($hasOpenEnded) {
+                    $studentContextText .= $openText;
+                }
+            }
+            */
         } else {
             $studentContextText = "Student Enrolled Strand: {$studentStrandInfo}\nAssessment Status: No completed assessment found yet. Inform the student gently that they haven't completed the assessment yet, and encourage them to take it by clicking 'Take Assessment'.\n";
         }
@@ -398,7 +460,7 @@ try {
         }
     }
 
-    // ── Build Database Context: Courses & Schools ──────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Build Database Context: Courses & Schools Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     $dbDataSections = [];
 
     // Query matching courses from database
@@ -410,11 +472,11 @@ try {
                 SELECT c.id, c.course_name, c.description, c.possible_careers, cl.name AS cluster_name
                 FROM courses c
                 LEFT JOIN clusters cl ON c.cluster_id = cl.id
-                WHERE c.course_name LIKE ? OR c.description LIKE ?
+                WHERE c.course_name LIKE ? OR c.description LIKE ? OR c.possible_careers LIKE ?
                 LIMIT 3
             ");
             if ($cStmt) {
-                $cStmt->bind_param('ss', $like, $like);
+                $cStmt->bind_param('sss', $like, $like, $like);
                 $cStmt->execute();
                 $cRes = $cStmt->get_result();
                 while ($cRow = $cRes->fetch_assoc()) {
@@ -463,7 +525,7 @@ try {
         if ($allJobsStmt) {
             while ($jRow = $allJobsStmt->fetch_assoc()) {
                 $jTitle = strtolower($jRow['job_title']);
-                if (strlen($jTitle) > 3 && preg_match('/\b' . preg_quote($jTitle, '/') . '\b/i', $message)) {
+                if (strlen($jTitle) > 3 && preg_match('/(?<!\w)' . preg_quote($jTitle, '/') . '(?!\w)/i', $message)) {
                     $jcStmt = $mysqli->prepare("
                         SELECT c.course_name 
                         FROM course_jobs cj
@@ -563,7 +625,7 @@ try {
     if (!empty($coursesForSchoolLookup) && isset($mysqli)) {
         foreach ($coursesForSchoolLookup as $cId => $cData) {
             $schStmt = $mysqli->prepare("
-                SELECT s.id, s.name, s.city, s.province, s.type, cs.is_specialization, cs.notes
+                SELECT s.id, s.name, s.city, s.province, s.type, cs.is_specialization, cs.notes, s.district_id
                 FROM course_schools cs
                 JOIN schools s ON cs.school_id = s.id
                 WHERE cs.course_id = ? AND s.status = 'active'
@@ -575,6 +637,12 @@ try {
                 $schRes = $schStmt->get_result();
                 $schoolsList = [];
                 while ($sRow = $schRes->fetch_assoc()) {
+                    if (isset($studentPreferredRegion) && $studentPreferredRegion !== 'All' && $studentPreferredRegion !== '') {
+                        $allowedDistricts = array_map('trim', explode(',', $studentPreferredRegion));
+                        if (!in_array((string)$sRow['district_id'], $allowedDistricts)) {
+                            continue; // Skip schools outside preferred district
+                        }
+                    }
                     $spec = ((int)$sRow['is_specialization'] === 1) ? " [Center of Specialization]" : "";
                     $schoolsList[] = "- {$sRow['name']} ({$sRow['city']}, {$sRow['province']}) - Type: {$sRow['type']}{$spec}";
                 }
@@ -647,7 +715,7 @@ try {
 
     $dbDataText = !empty($dbDataSections) ? implode("\n---\n", $dbDataSections) : "No specific course or school database lookup required for this general query.";
 
-    // ── 5. System Instruction Construction ─────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 5. System Instruction Construction Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     $systemInstruction = "You are Nando, the personalized AI Career Guidance Assistant for CareerPath at Riverview High School.
 You are helping a Senior High School student explore careers, college courses, schools, and their assessment results.
 
@@ -663,6 +731,7 @@ BEHAVIORAL DIRECTIVES:
    - Explain what their scores mean in simple, encouraging terms (Career Interest / RIASEC, Personality / Big Five, Skills, Strand Aptitude, and individual competencies).
    - Point out strengths indicated by high competency scores and interest alignments.
    - Explain why a course was officially recommended based on its alignment with their strand, competencies, career interests, and personality fit.
+   - Incorporate their Open-Ended Self-Reflection Answers into your advice. Use their own words or expressed interests to make your guidance more personalized and encouraging.
 
 2. Course Suggestions & Un-recommended Courses:
    - When a student asks about a course that was NOT in their top recommendations (e.g., 'BSIT wasn't in my results. Is it still something I can consider?'):
@@ -673,7 +742,7 @@ BEHAVIORAL DIRECTIVES:
 3. School and Course Information (Database Grounding):
    - Factual information regarding school offerings, locations, courses, and programs MUST be based STRICTLY on the DATABASE CONTEXT provided below.
    - Do NOT invent or hallucinate schools, campus branches, degrees, or program availability.
-   - If the student asks what schools offer a course, list ONLY the schools provided in the database context for that course.
+   - If the student asks what schools offer a course, list the schools provided in the database context for that course. If there are many schools (e.g. more than 5), suggest 3-5 of the most notable ones (like State Universities or Centers of Specialization) and mention that other schools are also available.
    - If the student asks what courses a school offers, list ONLY the courses provided in the database context for that school.
    - If the requested course, school, or location is not found in the database context, you MUST clearly state that the information is not currently available in the CareerPath database.
 
@@ -700,7 +769,7 @@ BEHAVIORAL DIRECTIVES:
 {$dbDataText}
 ";
 
-    // ── 6. Assemble Groq Messages ──────────────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 6. Assemble Groq Messages Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     $messages = [];
     $messages[] = ["role" => "system", "content" => $systemInstruction];
 
@@ -712,7 +781,7 @@ BEHAVIORAL DIRECTIVES:
     }
     $messages[] = ["role" => "user", "content" => $message];
 
-    // ── 7. Groq API Key Resolution ─────────────────────────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ 7. Groq API Key Resolution Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     $apiKey = trim($_ENV['GROQ_API_KEY'] ?? $_SERVER['GROQ_API_KEY'] ?? (getenv('GROQ_API_KEY') ?: ''));
     if (empty($apiKey) && file_exists(__DIR__ . '/../.env')) {
         $envLines = @file(__DIR__ . '/../.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);

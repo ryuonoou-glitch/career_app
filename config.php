@@ -46,6 +46,7 @@ if (!defined('CONFIG_LOADED')) {
     }
 
     $mysqli->set_charset('utf8mb4');
+    $mysqli->query("SET time_zone = '+08:00'");
 
     require_once __DIR__ . '/includes/db_helpers.php';
 
@@ -56,10 +57,15 @@ if (!defined('CONFIG_LOADED')) {
     if ($roleCol && ($roleColRow = $roleCol->fetch_assoc())) {
         if (stripos($roleColRow['Type'], 'super_admin') === false) {
             $mysqli->query("ALTER TABLE admins MODIFY COLUMN role ENUM('super_admin','Admin') NOT NULL DEFAULT 'Admin'");
-            // Promote the first/original admin (id=1) to super_admin
             $mysqli->query("UPDATE admins SET role = 'super_admin' WHERE id = 1");
         }
         $roleCol->free();
+    }
+
+    // ── Counselor Profile Picture Migration ──────
+    $counselorPicCol = $mysqli->query("SHOW COLUMNS FROM counselors LIKE 'profile_picture'");
+    if ($counselorPicCol && $counselorPicCol->num_rows === 0) {
+        $mysqli->query("ALTER TABLE counselors ADD COLUMN profile_picture VARCHAR(255) DEFAULT NULL AFTER status");
     }
 
     // Ensure counselors.status supports suspended (same options as students)
@@ -87,6 +93,34 @@ if (!defined('CONFIG_LOADED')) {
     }
     if ($ukIndex) {
         $ukIndex->free();
+    }
+
+    // ── Recommendation Accuracy Migration ──────
+    $mysqli->query("
+    CREATE TABLE IF NOT EXISTS `recommendation_evaluations` (
+      `id` int(11) NOT NULL AUTO_INCREMENT,
+      `assessment_id` int(11) NOT NULL,
+      `course_id` int(11) NOT NULL,
+      `is_aligned` tinyint(1) NOT NULL,
+      `evaluated_by` int(11) NOT NULL,
+      `evaluation_date` datetime NOT NULL,
+      PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+    ");
+
+    $mysqli->query("
+    CREATE TABLE IF NOT EXISTS `verified_recommendations` (
+      `id` int(11) NOT NULL AUTO_INCREMENT,
+      `assessment_id` int(11) NOT NULL,
+      `course_id` int(11) NOT NULL,
+      `rank` int(11) NOT NULL,
+      PRIMARY KEY (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+    ");
+
+    $adjReasonCol = $mysqli->query("SHOW COLUMNS FROM student_assessments LIKE 'adjustment_reason'");
+    if ($adjReasonCol && $adjReasonCol->num_rows === 0) {
+        $mysqli->query("ALTER TABLE student_assessments ADD COLUMN adjustment_reason TEXT NULL AFTER recommendation_validation");
     }
 
     // Application settings
@@ -209,6 +243,9 @@ if (!defined('CONFIG_LOADED')) {
         ob_start(function($buffer) {
             if (stripos($buffer, '</head>') !== false) {
                 $metaAndJs = '';
+                if (!empty($_SESSION['csrf_token'])) {
+                    $metaAndJs .= '<meta name="csrf-token" content="' . htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8') . '">';
+                }
                 
                 // Inject Favicon based on system_config logo or fallback to emoji
                 $faviconUrl = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>";
@@ -229,6 +266,11 @@ if (!defined('CONFIG_LOADED')) {
             if (stripos($buffer, '<form') !== false) {
                 $buffer = preg_replace_callback('/<form[^>]+method=["\']?post["\']?[^>]*>/i', function($matches) {
                     $formTag = $matches[0];
+                    if (function_exists('csrf_token_field')) {
+                        return $formTag . "\n    " . csrf_token_field();
+                    } elseif (!empty($_SESSION['csrf_token'])) {
+                        return $formTag . "\n    <input type=\"hidden\" name=\"csrf_token\" value=\"" . htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8') . "\">";
+                    }
                     return $formTag;
                 }, $buffer);
             }
@@ -239,6 +281,16 @@ if (!defined('CONFIG_LOADED')) {
     // Helper: base URL
     function base_url($path = '') {
         return BASE_URL . $path;
+    }
+
+    // Helper: validate email address domain
+    function isValidEmailAddress($email) {
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) return false;
+        $domain = strtolower(substr(strrchr($email, "@"), 1));
+        $allowed = ['gmail.com', 'yahoo.com', 'yahoo.com.ph', 'outlook.com', 'hotmail.com'];
+        if (in_array($domain, $allowed)) return true;
+        if (preg_match('/\.edu(\.ph)?$/', $domain)) return true;
+        return false;
     }
 
     // Helper: redirect
@@ -331,7 +383,12 @@ if (!defined('CONFIG_LOADED')) {
             }
         }
 
-        if ($status !== 'active' && $status !== 'graduated') {
+        if ($status === 'inactive') {
+            $currentPage = basename($_SERVER['PHP_SELF']);
+            if ($currentPage !== 'profile.php' && $currentPage !== 'logout.php') {
+                redirect('profile.php');
+            }
+        } elseif ($status !== 'active' && $status !== 'graduated') {
             $_SESSION = [];
             if (ini_get('session.use_cookies')) {
                 $p = session_get_cookie_params();

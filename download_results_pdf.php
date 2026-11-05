@@ -3,16 +3,108 @@ require_once 'config.php';
 require_once 'system_config.php';
 require_once __DIR__ . '/vendor/autoload.php';
 
-requireLogin();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+$isStaff = !empty($_SESSION['admin_id']) || !empty($_SESSION['counselor_id']);
+$assessmentIdParam = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+$assessment = null;
+$student = null;
+
+if ($isStaff) {
+    if ($assessmentIdParam <= 0) {
+        header('Location: assessment_verifications.php');
+        exit;
+    }
+    $stmt = $mysqli->prepare("
+        SELECT sa.id, sa.completed_at, sa.total_score, sa.medical_declaration, sa.verification_status,
+               sa.verified_by, sa.verified_by_role, sa.verified_at, sa.counselor_notes, sa.recommendation_validation,
+               s.id as student_id, s.first_name, s.middle_name, s.last_name, s.suffix, s.grade_level, st.name as strand_name
+        FROM student_assessments sa
+        JOIN students s ON sa.student_id = s.id
+        LEFT JOIN strands st ON s.strand_id = st.id
+        WHERE sa.id = ? AND sa.status = 'completed' AND sa.verification_status = 'verified'
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $assessmentIdParam);
+    $stmt->execute();
+    $assessment = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$assessment) {
+        header('Location: assessment_verifications.php');
+        exit;
+    }
+
+    $student = [
+        'id' => $assessment['student_id'],
+        'first_name' => $assessment['first_name'],
+        'middle_name' => $assessment['middle_name'],
+        'last_name' => $assessment['last_name'],
+        'suffix' => $assessment['suffix'],
+        'grade_level' => $assessment['grade_level'],
+        'strand_name' => $assessment['strand_name']
+    ];
+} else {
+    requireLogin();
+    $student = getCurrentStudent();
+    if (!$student) {
+        header('Location: login.php');
+        exit;
+    }
+
+    if ($assessmentIdParam > 0) {
+        $stmt = $mysqli->prepare("
+            SELECT sa.id, sa.completed_at, sa.total_score, sa.medical_declaration, sa.verification_status,
+                   sa.verified_by, sa.verified_by_role, sa.verified_at, sa.counselor_notes, sa.recommendation_validation
+            FROM student_assessments sa
+            WHERE sa.id = ? AND sa.student_id = ? AND sa.status = 'completed' AND sa.verification_status = 'verified'
+            LIMIT 1
+        ");
+        $stmt->bind_param("ii", $assessmentIdParam, $student['id']);
+    } else {
+        $stmt = $mysqli->prepare("
+            SELECT sa.id, sa.completed_at, sa.total_score, sa.medical_declaration, sa.verification_status,
+                   sa.verified_by, sa.verified_by_role, sa.verified_at, sa.counselor_notes, sa.recommendation_validation
+            FROM student_assessments sa
+            WHERE sa.student_id = ? AND sa.status = 'completed' AND sa.verification_status = 'verified'
+            ORDER BY sa.completed_at DESC LIMIT 1
+        ");
+        $stmt->bind_param("i", $student['id']);
+    }
+    $stmt->execute();
+    $assessment = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$assessment) {
+        // No results – redirect back
+        header('Location: assessment_results.php');
+        exit;
+    }
+}
+
+// Fetch verified counselor/staff name
+$counselorName = 'Guidance Counselor';
+if (!empty($assessment['verified_by'])) {
+    if (($assessment['verified_by_role'] ?? '') === 'admin' || ($assessment['verified_by_role'] ?? '') === 'super_admin') {
+        $cStmt = $mysqli->prepare("SELECT CONCAT(first_name, ' ', last_name) AS name FROM admins WHERE id = ? LIMIT 1");
+    } else {
+        $cStmt = $mysqli->prepare("SELECT CONCAT(first_name, ' ', last_name) AS name FROM counselors WHERE id = ? LIMIT 1");
+    }
+    if ($cStmt) {
+        $cStmt->bind_param('i', $assessment['verified_by']);
+        $cStmt->execute();
+        $cRow = $cStmt->get_result()->fetch_assoc();
+        if ($cRow && !empty($cRow['name'])) {
+            $counselorName = $cRow['name'];
+        }
+        $cStmt->close();
+    }
+}
 
 use Dompdf\Dompdf;
 use Dompdf\Options;
-
-$student = getCurrentStudent();
-if (!$student) {
-    header('Location: login.php');
-    exit;
-}
 
 // Construct full student name (middle name as initial: John D. Doe)
 $nameParts = [];
@@ -32,35 +124,12 @@ $completionDate = null;
 $totalScore     = 0;
 $careerScore = $personalityScore = $skillsScore = $strandScore = 0;
 
-$assessmentIdParam = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-
-if ($assessmentIdParam > 0) {
-    $stmt = $mysqli->prepare(
-        "SELECT id, completed_at, total_score FROM student_assessments
-         WHERE id = ? AND student_id = ? AND status = 'completed' LIMIT 1"
-    );
-    $stmt->bind_param("ii", $assessmentIdParam, $student['id']);
-} else {
-    $stmt = $mysqli->prepare(
-        "SELECT id, completed_at, total_score FROM student_assessments
-         WHERE student_id = ? AND status = 'completed'
-         ORDER BY completed_at DESC LIMIT 1"
-    );
-    $stmt->bind_param("i", $student['id']);
-}
-$stmt->execute();
-$assessment = $stmt->get_result()->fetch_assoc();
-$stmt->close();
-
-if (!$assessment) {
-    // No results – redirect back
-    header('Location: assessment_results.php');
-    exit;
-}
-
 $assessmentId   = $assessment['id'];
 $completionDate = date('F d, Y', strtotime($assessment['completed_at']));
 $totalScore     = round((float)$assessment['total_score'], 1);
+$medicalDeclaration = !empty($assessment['medical_declaration']) ? json_decode($assessment['medical_declaration'], true) : null;
+$hasMedicalAdvisory = ($medicalDeclaration && empty($medicalDeclaration['none']));
+
 
 // ── Category scores ──────────────────────────────────────────────────────────
 $stmt = $mysqli->prepare(
@@ -87,14 +156,15 @@ $overallScore = round(($careerScore + $personalityScore + $skillsScore + $strand
 // ── Recommended Courses ──────────────────────────────────────────────────────
 $recommendations = [];
 $stmt = $mysqli->prepare(
-    "SELECT c.course_name, c.description, c.possible_careers, r.match_percentage, r.explanation, r.rank
-     FROM recommendations r
-     JOIN courses c ON r.course_id = c.id
-     JOIN student_assessments sa ON r.assessment_id = sa.id
-     WHERE sa.student_id = ?
-     ORDER BY r.rank ASC, r.match_percentage DESC"
+     "SELECT c.course_name, c.description, c.possible_careers, r.match_percentage, r.explanation, vr.rank
+     FROM verified_recommendations vr
+     JOIN courses c ON vr.course_id = c.id
+     JOIN student_assessments sa ON vr.assessment_id = sa.id
+     LEFT JOIN recommendations r ON vr.course_id = r.course_id AND vr.assessment_id = r.assessment_id
+     WHERE sa.id = ?
+     ORDER BY vr.rank ASC"
 );
-$stmt->bind_param("i", $student['id']);
+$stmt->bind_param("i", $assessmentId);
 $stmt->execute();
 $res = $stmt->get_result();
 while ($row = $res->fetch_assoc()) $recommendations[] = $row;
@@ -108,12 +178,13 @@ $stmt = $mysqli->prepare(
      FROM schools s
      JOIN course_schools cs ON s.id = cs.school_id
      JOIN courses c ON cs.course_id = c.id
-     JOIN recommendations r ON c.id = r.course_id
-     JOIN student_assessments sa ON r.assessment_id = sa.id
-     WHERE sa.student_id = ? AND sa.status = 'completed'
+     JOIN verified_recommendations vr ON c.id = vr.course_id
+     LEFT JOIN recommendations r ON c.id = r.course_id AND vr.assessment_id = r.assessment_id
+     JOIN student_assessments sa ON vr.assessment_id = sa.id
+     WHERE sa.id = ? AND sa.status = 'completed'
      ORDER BY r.match_percentage DESC, s.name ASC"
 );
-$stmt->bind_param("i", $student['id']);
+$stmt->bind_param("i", $assessmentId);
 $stmt->execute();
 $res = $stmt->get_result();
 while ($row = $res->fetch_assoc()) $recommendedSchools[] = $row;
@@ -492,6 +563,25 @@ ob_start();
   </tr>
 </table>
 
+<?php if ($medicalDeclaration): ?>
+<!-- ════════════════════════════════════════════════ MEDICAL DECLARATION -->
+<div class="section-title">Medical & Physical Considerations Declaration</div>
+<div class="content-area" style="background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:12px 14px; margin-bottom:20px;">
+  <p style="margin:0 0 6px 0; font-size:11px; font-weight:bold; color:#b91c1c;">Student declared:</p>
+  <ul style="margin:0 0 10px 0; font-size:10px; color:#7f1d1d; padding-left:20px; line-height:1.4;">
+    <?php if (!empty($medicalDeclaration['color_perception'])): ?><li>Difficulty distinguishing certain colors</li><?php endif; ?>
+    <?php if (!empty($medicalDeclaration['vision'])): ?><li>Difficulty seeing clearly</li><?php endif; ?>
+    <?php if (!empty($medicalDeclaration['hearing'])): ?><li>Difficulty hearing</li><?php endif; ?>
+    <?php if (!empty($medicalDeclaration['physical_limitation'])): ?><li>Physical condition that limits strenuous activity</li><?php endif; ?>
+    <?php if (!empty($medicalDeclaration['other'])): ?><li>Other health or physical consideration<?= !empty($medicalDeclaration['other_description']) ? ' (' . htmlspecialchars($medicalDeclaration['other_description']) . ')' : '' ?></li><?php endif; ?>
+    <?php if (!empty($medicalDeclaration['none'])): ?><li>None of the above</li><?php endif; ?>
+  </ul>
+  <p style="margin:0; font-size:9px; color:#991b1b; font-style:italic; line-height:1.4;">
+    Medical declarations are informational only and do not determine medical eligibility. Students should consult the Guidance Counselor and appropriate medical professionals regarding specific course or career requirements.
+  </p>
+</div>
+<?php endif; ?>
+
 <!-- ══════════════════════════════════════════════════ RECOMMENDED COURSES -->
 <div class="section-title">Recommended Courses</div>
 <div class="content-area">
@@ -565,6 +655,48 @@ ob_start();
       <?php endforeach; ?>
     </div>
   <?php endif; ?>
+</div>
+
+<!-- ═══════════════════════════════════════════════ COUNSELOR VERIFICATION & VALIDATION -->
+<div class="section-title">Guidance Verification & Recommendation Validation</div>
+<div class="content-area" style="margin: 0 24px 24px;">
+  <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:12px 18px;">
+    <table style="width:100%; border-collapse:collapse; font-size:11px;">
+      <tr>
+        <td style="width:50%; padding:4px 0;">
+          <strong>Verification Status:</strong> 
+          <span style="color:#059669; font-weight:bold;">Verified & Released</span>
+        </td>
+        <td style="width:50%; padding:4px 0;">
+          <strong>Recommendation Validation:</strong> 
+          <?php if (($assessment['recommendation_validation'] ?? '') === 'appropriate'): ?>
+            <span style="color:#059669; font-weight:bold;">Appropriate</span>
+          <?php elseif (($assessment['recommendation_validation'] ?? '') === 'needs_review'): ?>
+            <span style="color:#d97706; font-weight:bold;">Needs Review</span>
+          <?php else: ?>
+            <span style="color:#64748b;">Verified</span>
+          <?php endif; ?>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:4px 0;">
+          <strong>Verified By:</strong> <?= htmlspecialchars($counselorName) ?> 
+          <?= (!empty($assessment['verified_by_role']) && $assessment['verified_by_role'] === 'admin') ? '(Administrator)' : '(Guidance Counselor)' ?>
+        </td>
+        <td style="padding:4px 0;">
+          <strong>Verification Date:</strong> <?= !empty($assessment['verified_at']) ? date('F d, Y h:i A', strtotime($assessment['verified_at'])) : date('F d, Y', strtotime($assessment['completed_at'])) ?>
+        </td>
+      </tr>
+      <?php if (!empty($assessment['counselor_notes'])): ?>
+      <tr>
+        <td colspan="2" style="padding-top:8px; border-top:1px dashed #cbd5e1; color:#334155;">
+          <strong>Counselor's Note / Remarks:</strong><br>
+          <span style="color:#1e293b;"><?= nl2br(htmlspecialchars($assessment['counselor_notes'])) ?></span>
+        </td>
+      </tr>
+      <?php endif; ?>
+    </table>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════ FOOTER -->

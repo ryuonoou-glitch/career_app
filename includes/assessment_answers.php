@@ -29,9 +29,58 @@ function getQuestionTextByType($mysqli, $questionType, $questionId) {
     return $row['question_text'] ?? null;
 }
 
+function getOpenEndedQuestionText($mysqli, $questionType, $questionId, $savedQuestionText = '') {
+    if (!empty($savedQuestionText)) {
+        return $savedQuestionText;
+    }
+
+    $tables = [
+        'career' => 'questions_career',
+        'personality' => 'questions_personality',
+        'skills' => 'questions_skills',
+        'strand' => 'questions_strand',
+    ];
+
+    if (!isset($tables[$questionType])) {
+        return null;
+    }
+
+    $table = $tables[$questionType];
+    $row = null;
+
+    if ($questionId > 0) {
+        $stmt = $mysqli->prepare("SELECT question_text, question_type FROM {$table} WHERE id = ? LIMIT 1");
+        if ($stmt) {
+            $stmt->bind_param('i', $questionId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($row && $row['question_type'] === 'open-ended') {
+                return $row['question_text'];
+            }
+        }
+    }
+
+    // Fallback: If question at $questionId is not open-ended (e.g. database reordered questions),
+    // get the active open-ended question for this category
+    $fallbackRes = $mysqli->query("SELECT question_text FROM {$table} WHERE is_active = 1 AND question_type = 'open-ended' ORDER BY id ASC LIMIT 1");
+    if ($fallbackRes && $fallbackRow = $fallbackRes->fetch_assoc()) {
+        return $fallbackRow['question_text'];
+    }
+
+    return $row['question_text'] ?? "Question #{$questionId}";
+}
+
 function enrichAnswersWithQuestionText($mysqli, array $answers) {
     foreach ($answers as &$answer) {
-        if (empty($answer['question_text'])) {
+        if (!empty($answer['open_answer'])) {
+            $answer['question_text'] = getOpenEndedQuestionText(
+                $mysqli,
+                $answer['question_type'] ?? '',
+                (int)($answer['question_id'] ?? 0),
+                $answer['question_text'] ?? ''
+            );
+        } elseif (empty($answer['question_text'])) {
             $answer['question_text'] = getQuestionTextByType(
                 $mysqli,
                 $answer['question_type'] ?? '',
@@ -119,7 +168,8 @@ function fetchStudentAssessmentAnswers($mysqli, $studentId, $assessmentType = ''
 
     $query = "
         SELECT sa.id as assessment_id, sa.created_at, sa.status, sa.started_at, sa.completed_at, sa.total_score,
-               saq.id as answer_id, saq.question_type, saq.question_id,
+               sa.verification_status, sa.verified_by, sa.verified_by_role, sa.counselor_notes, sa.recommendation_validation, sa.revision_details,
+               saq.id as answer_id, saq.question_type, saq.question_id, saq.question_text,
                saq.selected_option_id, saq.likert_value, saq.open_answer, saq.score,
                qo.option_label, qo.option_text, qo.is_correct,
                qo_correct.option_label AS correct_option_label,

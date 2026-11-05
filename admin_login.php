@@ -65,24 +65,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     if ($passwordValid) {
+                        session_unset();
                         session_regenerate_id(true);
                         $nameParts = array_filter([$admin['first_name'], $admin['middle_name'], $admin['last_name']]);
                         $fullName = implode(' ', $nameParts);
                         if (!empty($admin['suffix'])) {
                             $fullName .= ' ' . $admin['suffix'];
                         }
-                        // Reset admin session keys while preserving any active student session
-                        unset(
-                            $_SESSION['admin_id'],
-                            $_SESSION['admin_email'],
-                            $_SESSION['email'],
-                            $_SESSION['admin_name'],
-                            $_SESSION['admin_role'],
-                            $_SESSION['is_admin'],
-                            $_SESSION['staff_id'],
-                            $_SESSION['staff_role'],
-                            $_SESSION['staff_name']
-                        );
 
                         $_SESSION['admin_id'] = $admin['id'];
                         $_SESSION['admin_email'] = $admin['email'];

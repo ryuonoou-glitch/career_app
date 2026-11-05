@@ -110,55 +110,55 @@ require_once 'system_config.php';
 
         <div class="legal-section">
             <h2>1. Information We Collect</h2>
-            <p>When you use the <?php echo htmlspecialchars(getSystemConfig('name')); ?>, we collect various types of information to provide you with tailored career guidance and recommendations. This includes:</p>
+            <p>In accordance with School policies and standard educational data privacy laws (e.g., the Data Privacy Act of 2012), the <?php echo htmlspecialchars(getSystemConfig('name')); ?> collects specific data to provide tailored career guidance:</p>
             <ul>
-                <li><strong>Personal Data:</strong> Name, Student ID, email address, date of birth, gender, and contact details.</li>
-                <li><strong>Academic Information:</strong> Grade level, academic strand, and school year.</li>
-                <li><strong>Assessment Data:</strong> Your responses to career assessments, including skills, interests, and personality tests.</li>
-                <li><strong>System Usage Data:</strong> Timestamps of assessments taken, login activity, and profile updates.</li>
+                <li><strong>Personal Data:</strong> Name, valid Student ID, email address, date of birth, gender, and contact details as verified against School records.</li>
+                <li><strong>Academic Information:</strong> Grade level, academic strand, and current school year enrollment.</li>
+                <li><strong>Assessment Data:</strong> Your responses to career assessments, which form part of your internal academic profile.</li>
+                <li><strong>System Usage Data:</strong> Timestamps of assessments taken, login activity, and profile updates for auditing purposes.</li>
             </ul>
         </div>
 
         <div class="legal-section">
             <h2>2. How We Use Your Information</h2>
-            <p>We use the collected information for the following purposes:</p>
+            <p>Data collected is used strictly for academic and career counseling purposes within the School:</p>
             <ul>
                 <li>To generate personalized career path, course, and school recommendations based on your assessment results.</li>
-                <li>To allow school counselors and administrators to monitor your progress and provide direct guidance.</li>
-                <li>To generate anonymized, aggregated statistical reports for school administration to analyze trends in student career interests.</li>
-                <li>To maintain the security and integrity of the System.</li>
+                <li>To equip School Counselors and Administrators with accurate data to monitor student progress and provide effective guidance interventions.</li>
+                <li>To generate anonymized, aggregated statistical reports for the School Administration to analyze curriculum alignment and student career interests.</li>
+                <li>To maintain the security and academic integrity of the System.</li>
             </ul>
         </div>
 
         <div class="legal-section">
             <h2>3. Data Sharing and Disclosure</h2>
-            <p>Your data is strictly confidential and is treated with the utmost care. We do not sell, trade, or rent your personal information to third parties.</p>
-            <p>Your data will only be accessible to:</p>
+            <p>Your data is strictly confidential and treated as sensitive educational records. We do not sell, trade, or share your personal information with external third parties without explicit consent from you or your legal guardian.</p>
+            <p>Internally, your data is accessible only on a strict need-to-know basis to:</p>
             <ul>
-                <li><strong>You:</strong> Through your personal student dashboard.</li>
-                <li><strong>School Counselors:</strong> To provide you with personalized academic and career counseling.</li>
-                <li><strong>System Administrators:</strong> For the purpose of system maintenance and generating school-wide reports.</li>
+                <li><strong>You:</strong> Through your personal, secured student dashboard.</li>
+                <li><strong>School Counselors:</strong> To provide you with personalized academic, behavioral, and career counseling.</li>
+                <li><strong>System Administrators:</strong> Exclusively for system maintenance, auditing, and generating high-level School reports.</li>
             </ul>
         </div>
 
         <div class="legal-section">
-            <h2>4. Data Security</h2>
-            <p>We implement a variety of security measures to maintain the safety of your personal information. These include secure password hashing, prepared database statements to prevent injection attacks, and restricted access controls for administrative areas.</p>
+            <h2>4. Data Security & Retention</h2>
+            <p>The School employs strict security protocols to safeguard your educational records. These include encrypted passwords, secure database architecture, and restricted access controls. Student data is retained in accordance with the School's official records retention policy, after which it is securely archived or disposed of.</p>
         </div>
 
         <div class="legal-section">
-            <h2>5. Your Rights</h2>
-            <p>You have the right to view the personal information and assessment results stored in the System. If you believe any of your demographic information is incorrect, you may update it through your profile page. To request deletion of your account or data, please contact your school counselor or system administrator.</p>
+            <h2>5. Student Rights</h2>
+            <p>As a student, you (and your parents/guardians) have the right to review the personal information and assessment results stored in the System. If there are discrepancies in your demographic or academic data, you must coordinate with the School Registrar or Guidance Office for official correction. For inquiries regarding data deletion or privacy concerns, please contact your School Administrator.</p>
         </div>
 
         <div class="legal-section">
             <h2>6. Changes to This Privacy Policy</h2>
-            <p>We may update our Privacy Policy from time to time. We will notify you of any changes by posting the new Privacy Policy on this page and updating the "Last updated" date.</p>
+            <p>The School reserves the right to update this Privacy Policy to comply with new Department of Education mandates or legal privacy requirements. Updates will be broadcasted via official School announcements and updated on this page.</p>
         </div>
 
         <div class="legal-section">
-            <h2>7. Contact Us</h2>
-            <p>If you have any questions about this Privacy Policy or how your data is handled, please contact your school's guidance office or the system administrator.</p>
+            <h2>7. Contact the School</h2>
+            <p>If you have any questions or concerns regarding this Privacy Policy or the handling of your educational records, please immediately contact the School's Guidance Office, the Data Protection Officer (DPO), or the Principal's Office.</p>
         </div>
 
         <div style="margin-top: 3rem; text-align: center;">

@@ -37,7 +37,7 @@ function password_reset_mask_email(string $email): string
 function password_reset_send_otp(mysqli $mysqli, string $email, bool $forAdmin): array
 {
     $email = trim(strtolower($email));
-    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    if ($email === '' || !isValidEmailAddress($email)) {
         return ['success' => false, 'message' => 'Please enter a valid email address.'];
     }
 
@@ -237,6 +237,28 @@ function password_reset_apply_new_password(mysqli $mysqli, string $newPassword, 
         return ['success' => false, 'message' => 'Please verify your code first.'];
     }
 
+    $currentHash = '';
+    if ($ctx['account_type'] === 'student') {
+        $stmt = $mysqli->prepare("SELECT password FROM students WHERE id = ?");
+    } elseif ($ctx['account_type'] === 'counselor') {
+        $stmt = $mysqli->prepare("SELECT password FROM counselors WHERE id = ?");
+    } else {
+        $stmt = $mysqli->prepare("SELECT password FROM admins WHERE id = ?");
+    }
+    if ($stmt) {
+        $stmt->bind_param('i', $ctx['user_id']);
+        $stmt->execute();
+        $res = $stmt->get_result()->fetch_assoc();
+        if ($res) {
+            $currentHash = $res['password'] ?? '';
+        }
+        $stmt->close();
+    }
+
+    if ($currentHash && (password_verify($newPassword, $currentHash) || $newPassword === $currentHash)) {
+        return ['success' => false, 'message' => 'This is your current password. Please choose a new password.'];
+    }
+
     $hash = password_hash($newPassword, PASSWORD_DEFAULT);
 
     if ($ctx['account_type'] === 'student') {
@@ -270,6 +292,7 @@ function password_reset_apply_new_password(mysqli $mysqli, string $newPassword, 
 
 /**
  * Resend OTP for current session email.
+ * Enforces a 60-second server-side cooldown between resend attempts.
  * @return array{success:bool,message:string}
  */
 function password_reset_resend_otp(mysqli $mysqli): array
@@ -278,6 +301,21 @@ function password_reset_resend_otp(mysqli $mysqli): array
     if (!$ctx || empty($ctx['email'])) {
         return ['success' => false, 'message' => 'Session expired. Please start again.'];
     }
+
+    // ── Server-side rate limit: 60 seconds between resends ────────────────────
+    $lastResend = $ctx['last_resend_at'] ?? 0;
+    $cooldown   = 60; // seconds
+    $elapsed    = time() - $lastResend;
+    if ($lastResend > 0 && $elapsed < $cooldown) {
+        $remaining = $cooldown - $elapsed;
+        return [
+            'success' => false,
+            'message' => "Please wait {$remaining} second(s) before requesting a new code.",
+        ];
+    }
+
+    // ── Record the timestamp before sending ───────────────────────────────────
+    $_SESSION[password_reset_session_key()]['last_resend_at'] = time();
 
     return password_reset_send_otp($mysqli, $ctx['email'], !empty($ctx['for_admin']));
 }

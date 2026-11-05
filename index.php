@@ -80,10 +80,8 @@ if (!file_exists($heroDest)) {
                 </p>
                 <div class="hero-cta">
                     <a href="login.php" class="btn btn-primary">Start Career Assessment</a>
-                    <a href="signup.php" class="btn btn-primary">Get Started Free</a>
-                    <p class="hero-note">
-                        <span class="highlight">100+ Questions</span> • Instant Results • Free
-                    </p>
+                    <a href="signup.php" class="btn btn-primary">Get Started</a>
+                   
                 </div>
             </div>
             <div class="hero-visual">

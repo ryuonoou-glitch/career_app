@@ -34,7 +34,7 @@ $staffRole = get_staff_role();
 
         <!-- 3. Assessments Group (Shared Sequence for Both Roles) -->
         <?php 
-            $assessmentPages = ['manage_questions.php', 'ongoing_assessments.php', 'admin_assessment_results.php', 'counselor_results.php', 'admin-assessments.php', 'counselor_answers.php'];
+            $assessmentPages = ['manage_questions.php', 'ongoing_assessments.php', 'admin_assessment_results.php', 'counselor_results.php', 'admin-assessments.php', 'counselor_answers.php', 'assessment_verifications.php', 'counselor_review.php'];
             $isAssessmentGroupOpen = in_array($currentScript, $assessmentPages, true);
         ?>
         <div class="nav-group">
@@ -68,11 +68,18 @@ $staffRole = get_staff_role();
                     Assessment Answers
                 </a>
                 <?php endif; ?>
+                
+                <?php if (has_permission('view_assessment_results')): ?>
+                <a href="assessment_verifications.php" class="nav-subitem <?php echo ($currentScript === 'assessment_verifications.php' || $currentScript === 'counselor_review.php') ? 'active' : ''; ?>">
+                    <i class="fa-solid fa-user-check"></i>
+                    Assessment Verification
+                </a>
+                <?php endif; ?>
             </div>
         </div>
 
-        <?php if (has_permission('manage_careers')): ?>
-        <!-- Career Group (Admin only) -->
+        <?php if (has_permission('manage_careers') || has_permission('view_schools')): ?>
+        <!-- Career Group -->
         <?php 
             $careerPages = ['manage_clusters.php', 'manage_courses.php', 'manage_schools.php', 'manage_jobs.php'];
             $isCareerGroupOpen = in_array($currentScript, $careerPages, true);
@@ -84,6 +91,7 @@ $staffRole = get_staff_role();
                 <i class="fa-solid fa-chevron-down chevron"></i>
             </button>
             <div class="nav-submenu <?php echo $isCareerGroupOpen ? 'open' : ''; ?>">
+                <?php if (has_permission('manage_careers')): ?>
                 <a href="manage_clusters.php" class="nav-subitem <?php echo ($currentScript === 'manage_clusters.php') ? 'active' : ''; ?>">
                     <i class="fa-solid fa-layer-group"></i>
                     Manage Career Clusters
@@ -92,14 +100,17 @@ $staffRole = get_staff_role();
                     <i class="fa-solid fa-book-open"></i>
                     Manage Courses
                 </a>
+                <?php endif; ?>
                 <a href="manage_schools.php" class="nav-subitem <?php echo ($currentScript === 'manage_schools.php') ? 'active' : ''; ?>">
                     <i class="fa-solid fa-school"></i>
                     Manage Schools
                 </a>
+                <?php if (has_permission('manage_careers')): ?>
                 <a href="manage_jobs.php" class="nav-subitem <?php echo ($currentScript === 'manage_jobs.php') ? 'active' : ''; ?>">
                     <i class="fa-solid fa-hard-hat"></i>
                     Manage Jobs
                 </a>
+                <?php endif; ?>
             </div>
         </div>
         <?php endif; ?>

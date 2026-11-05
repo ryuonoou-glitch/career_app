@@ -1,0 +1,38 @@
+{
+    "exported_at": "2026-09-24T14:32:48+02:00",
+    "output_directory": "docs\/appendix_e\/diagrams",
+    "diagrams": [
+        {
+            "file": "figure_e1_use_case.png",
+            "status": "success"
+        },
+        {
+            "file": "figure_e2_registration_login.png",
+            "status": "success"
+        },
+        {
+            "file": "figure_e3_assessment_flow.png",
+            "status": "success"
+        },
+        {
+            "file": "figure_e4_recommendation_scoring.png",
+            "status": "success"
+        },
+        {
+            "file": "figure_e5_admin_management.png",
+            "status": "success"
+        },
+        {
+            "file": "figure_e6_architecture.png",
+            "status": "success"
+        },
+        {
+            "file": "figure_e7_hardware.png",
+            "status": "success"
+        },
+        {
+            "file": "figure_e8_erd.png",
+            "status": "success"
+        }
+    ]
+}

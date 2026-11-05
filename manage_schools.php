@@ -31,22 +31,23 @@ function formatLocationName($name) {
     }, $out);
 }
 
-// Check if admin is logged in
-if (!isset($_SESSION['admin_id']) || !isset($_SESSION['is_admin'])) {
-    header('Location: admin_login.php');
-    exit();
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-}
+// Check access permission (admin or counselor)
+require_once __DIR__ . '/includes/auth_rbac.php';
+require_permission('view_schools');
 
 // Handle AJAX requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     header('Content-Type: application/json');
-    $response = ['success' => false, 'message' => ''];
     
     $action = $_POST['action'];
+    
+    // Counselors are only allowed to read data via get_school
+    if (!is_admin() && $action !== 'get_school') {
+        echo json_encode(['success' => false, 'message' => 'Action not permitted for counselors']);
+        exit;
+    }
+    
+    $response = ['success' => false, 'message' => ''];
     $userId = $_SESSION['admin_id'] ?? $_SESSION['counselor_id'] ?? 0;
     $userType = isset($_SESSION['admin_id']) ? 'admin' : 'counselor';
     
@@ -62,8 +63,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $website = trim($_POST['website'] ?? '');
             $type = trim($_POST['type'] ?? '');
             
-            if (empty($name) || $cityId <= 0 || $provinceId <= 0 || $districtId <= 0) {
-                $response['message'] = 'Name, city, province, and district are required';
+            if (empty($name) || $cityId <= 0 || $provinceId <= 0 || $districtId <= 0 || empty($type)) {
+                $response['message'] = 'Name, city, province, district, and school type are required';
+                echo json_encode($response);
+                exit;
+            }
+
+            // Validate that at least one offered course is added
+            $submittedCourseIds = [];
+            if (!empty($_POST['offered_course_ids'])) {
+                $raw = $_POST['offered_course_ids'];
+                if (is_array($raw)) {
+                    $submittedCourseIds = array_map('intval', $raw);
+                } else {
+                    $decoded = json_decode($raw, true);
+                    if (is_array($decoded)) {
+                        $submittedCourseIds = array_map('intval', $decoded);
+                    } else {
+                        foreach (explode(',', $raw) as $cid) {
+                            $cid = (int)trim($cid);
+                            if ($cid > 0) $submittedCourseIds[] = $cid;
+                        }
+                    }
+                }
+                $submittedCourseIds = array_unique(array_filter($submittedCourseIds));
+            }
+
+            if (empty($submittedCourseIds)) {
+                $response['message'] = 'Please add at least one offered course before creating this school';
                 echo json_encode($response);
                 exit;
             }
@@ -251,8 +278,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $website = trim($_POST['website'] ?? '');
             $type = trim($_POST['type'] ?? '');
             
-            if ($schoolId <= 0 || empty($name) || $cityId <= 0 || $provinceId <= 0 || $districtId <= 0) {
-                $response['message'] = 'Invalid data provided (Name, city, province, and district are required)';
+            if ($schoolId <= 0 || empty($name) || $cityId <= 0 || $provinceId <= 0 || $districtId <= 0 || empty($type)) {
+                $response['message'] = 'Invalid data provided (Name, city, province, district, and school type are required)';
+                echo json_encode($response);
+                exit;
+            }
+
+            // Validate that at least one offered course is added
+            $submittedCourseIds = [];
+            if (!empty($_POST['offered_course_ids'])) {
+                $raw = $_POST['offered_course_ids'];
+                if (is_array($raw)) {
+                    $submittedCourseIds = array_map('intval', $raw);
+                } else {
+                    $decoded = json_decode($raw, true);
+                    if (is_array($decoded)) {
+                        $submittedCourseIds = array_map('intval', $decoded);
+                    } else {
+                        foreach (explode(',', $raw) as $cid) {
+                            $cid = (int)trim($cid);
+                            if ($cid > 0) $submittedCourseIds[] = $cid;
+                        }
+                    }
+                }
+                $submittedCourseIds = array_unique(array_filter($submittedCourseIds));
+            }
+
+            if (empty($submittedCourseIds)) {
+                $response['message'] = 'Please select at least one course offered by this school';
                 echo json_encode($response);
                 exit;
             }
@@ -451,8 +504,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             echo json_encode($response);
             exit;
             
+        case 'check_school_associations':
+            $schoolId = (int)($_POST['id'] ?? 0);
+            $check = $mysqli->prepare("SELECT COUNT(*) as count FROM course_schools WHERE school_id = ?");
+            $check->bind_param('i', $schoolId);
+            $check->execute();
+            $count = (int)($check->get_result()->fetch_assoc()['count'] ?? 0);
+            $check->close();
+            echo json_encode(['success' => true, 'count' => $count]);
+            exit;
+
         case 'delete_school':
             $schoolId = (int)($_POST['id'] ?? 0);
+            $unlinkCourses = !empty($_POST['unlink_courses']);
             if ($schoolId <= 0) {
                 $response['message'] = 'Invalid school ID';
                 echo json_encode($response);
@@ -463,11 +527,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $check = $mysqli->prepare("SELECT COUNT(*) as count FROM course_schools WHERE school_id = ?");
             $check->bind_param('i', $schoolId);
             $check->execute();
-            $count = $check->get_result()->fetch_assoc()['count'];
+            $count = (int)($check->get_result()->fetch_assoc()['count'] ?? 0);
             $check->close();
             
-            if ($count > 0) {
-                $response['message'] = 'Cannot delete school: It is associated with courses';
+            if ($count > 0 && !$unlinkCourses) {
+                $response['has_associations'] = true;
+                $response['count'] = $count;
+                $response['message'] = 'This school is associated with courses. Please confirm unlinking courses.';
                 echo json_encode($response);
                 exit;
             }
@@ -482,20 +548,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $schQuery->close();
             }
 
-            $stmt = $mysqli->prepare("DELETE FROM schools WHERE id = ?");
-            $stmt->bind_param('i', $schoolId);
-            
-            if ($stmt->execute()) {
+            // Database transaction: unlink course_schools (if any) and delete school
+            $mysqli->begin_transaction();
+            try {
+                if ($count > 0) {
+                    $delJunction = $mysqli->prepare("DELETE FROM course_schools WHERE school_id = ?");
+                    $delJunction->bind_param('i', $schoolId);
+                    if (!$delJunction->execute()) {
+                        throw new Exception('Failed to remove course associations: ' . $delJunction->error);
+                    }
+                    $delJunction->close();
+                }
+
+                $stmt = $mysqli->prepare("DELETE FROM schools WHERE id = ?");
+                $stmt->bind_param('i', $schoolId);
+                if (!$stmt->execute()) {
+                    throw new Exception('Failed to delete school: ' . $stmt->error);
+                }
+                $stmt->close();
+
+                $mysqli->commit();
+
                 $schoolName = $oldSchool['name'] ?? 'Unknown School';
-                $description = "Admin removed {$schoolName} from the system";
+                $description = "Admin removed {$schoolName} from the system" . ($count > 0 ? " (unlinked {$count} course association(s))" : "");
                 log_activity($userId, $userType, 'Deleted School', 'schools', $schoolId, $description, json_encode($oldSchool), null);
 
                 $response['success'] = true;
                 $response['message'] = 'School deleted successfully';
-            } else {
-                $response['message'] = 'Failed to delete school';
+            } catch (Exception $ex) {
+                $mysqli->rollback();
+                $response['success'] = false;
+                $response['message'] = $ex->getMessage();
             }
-            $stmt->close();
             echo json_encode($response);
             exit;
     }
@@ -504,7 +588,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 // Get all schools
 $schools = [];
 $result = $mysqli->query("
-    SELECT s.*, c.citymunDesc as city_name, p.provDesc as province_name, d.name as district_name
+    SELECT s.*, c.citymunDesc as city_name, p.provDesc as province_name, d.name as district_name,
+    (SELECT COUNT(*) FROM course_schools WHERE school_id = s.id) as course_count
     FROM schools s
     LEFT JOIN refcitymun c ON s.city_id = c.id
     LEFT JOIN refprovince p ON s.province_id = p.id
@@ -580,7 +665,7 @@ function getSchoolAvatarStyle($name) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manage Schools - <?php echo htmlspecialchars(getSystemConfig('short_name')); ?></title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="admin.css">
+    <link rel="stylesheet" href="admin.css?v=<?php echo filemtime('admin.css'); ?>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         /* -- Redesigned Courses Offered Section (Add & Edit School Modals) -- */
@@ -1263,170 +1348,191 @@ function getSchoolAvatarStyle($name) {
             color: #f8fafc;
         }
 
-        /* -- Modern Manage Schools Page Layout & Cards -- */
-        .schools-page-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-            flex-wrap: wrap;
-        }
-        .header-title-box {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-        .header-title-box h1 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #f8fafc;
-            margin: 0;
-        }
-        .schools-count-badge {
-            background: rgba(245, 158, 11, 0.15);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-            color: #fbbf24;
-            padding: 0.35rem 0.85rem;
-            border-radius: 999px;
-            font-size: 0.82rem;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-        }
-        .btn-add-school-main {
-            background: linear-gradient(135deg, #f59e0b, #d97706);
-            color: #0f172a;
-            border: none;
-            padding: 0.7rem 1.35rem;
-            border-radius: 10px;
-            font-weight: 700;
-            font-size: 0.92rem;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.6rem;
-            cursor: pointer;
-            box-shadow: 0 4px 14px rgba(245, 158, 11, 0.28);
-            transition: all 0.2s ease;
-        }
-        .btn-add-school-main:hover {
-            background: linear-gradient(135deg, #fbbf24, #f59e0b);
-            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
-            transform: translateY(-2px);
-        }
-
-        /* -- Modern Search / Filter Toolbar Card -- */
+        /* -- Modern Manage Schools Single-Row Toolbar -- */
         .schools-filter-card {
             background: rgba(30, 41, 59, 0.6);
             border: 1px solid rgba(255, 255, 255, 0.08);
             backdrop-filter: blur(12px);
             border-radius: 14px;
-            padding: 1.25rem 1.5rem;
-            margin-bottom: 1.75rem;
+            padding: 0.65rem 0.85rem;
+            margin-bottom: 1.5rem;
             box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-        }
-        .filter-grid {
-            display: grid;
-            grid-template-columns: 1.4fr 1fr 1fr 1fr auto;
-            gap: 1rem;
-            align-items: flex-end;
-        }
-        @media (max-width: 1200px) {
-            .filter-grid {
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            }
-        }
-        .filter-field {
             display: flex;
-            flex-direction: column;
-            gap: 0.45rem;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            scrollbar-width: thin;
         }
-        .filter-field label {
-            font-size: 0.76rem;
+
+        .schools-count-badge {
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            color: #fbbf24;
+            padding: 0 0.65rem;
+            height: 38px;
+            border-radius: 9px;
+            font-size: 0.8rem;
             font-weight: 700;
-            color: #94a3b8;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+            box-sizing: border-box;
         }
+
         .filter-input-wrap {
             position: relative;
             display: flex;
             align-items: center;
+            flex-shrink: 0;
         }
+
+        .filter-input-wrap.search-input-wrap {
+            flex: 1 1 140px;
+            min-width: 110px;
+            max-width: 220px;
+        }
+
+        .filter-input-wrap.select-wrap {
+            flex: 0 1 115px;
+            min-width: 85px;
+            max-width: 125px;
+        }
+
         .filter-input-wrap i {
             position: absolute;
-            left: 0.85rem;
+            left: 0.65rem;
             color: #64748b;
-            font-size: 0.85rem;
+            font-size: 0.78rem;
             pointer-events: none;
             z-index: 1;
         }
+
         .filter-input-wrap input,
         .filter-input-wrap select {
             width: 100%;
-            padding: 0.65rem 0.85rem 0.65rem 2.25rem;
+            height: 38px;
+            padding: 0 0.55rem 0 1.8rem;
             background: rgba(15, 23, 42, 0.6);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 9px;
             color: #f1f5f9;
-            font-size: 0.88rem;
+            font-size: 0.8rem;
+            font-weight: 500;
             transition: all 0.2s;
             outline: none;
             box-sizing: border-box;
+            white-space: nowrap;
+            text-overflow: ellipsis;
         }
+
+        .filter-input-wrap select {
+            appearance: none;
+            -webkit-appearance: none;
+            padding-right: 1.35rem;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.4rem center;
+            cursor: pointer;
+        }
+
         .filter-input-wrap input:focus,
         .filter-input-wrap select:focus {
             border-color: #f59e0b;
             background: rgba(15, 23, 42, 0.85);
             box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
         }
+
         .filter-input-wrap select option {
             background: #0f172a;
             color: #f1f5f9;
         }
-        .filter-btn-group {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
+
         .btn-filter-search {
+            height: 38px;
+            box-sizing: border-box;
             background: linear-gradient(135deg, #f59e0b, #d97706);
             color: #0f172a;
             border: none;
-            padding: 0.65rem 1.2rem;
+            padding: 0 0.8rem;
             border-radius: 9px;
             font-weight: 700;
-            font-size: 0.88rem;
+            font-size: 0.8rem;
             display: inline-flex;
             align-items: center;
-            gap: 0.45rem;
+            gap: 0.3rem;
             cursor: pointer;
             transition: all 0.2s;
             white-space: nowrap;
+            flex-shrink: 0;
         }
+
         .btn-filter-search:hover {
             background: linear-gradient(135deg, #fbbf24, #f59e0b);
             transform: translateY(-1px);
         }
+
         .btn-filter-clear {
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #94a3b8;
-            padding: 0.65rem 1rem;
+            height: 38px;
+            box-sizing: border-box;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            color: #e2e8f0;
+            padding: 0 0.75rem;
             border-radius: 9px;
             font-weight: 600;
-            font-size: 0.88rem;
+            font-size: 0.8rem;
             display: inline-flex;
             align-items: center;
-            gap: 0.45rem;
+            gap: 0.35rem;
             cursor: pointer;
             transition: all 0.2s;
             white-space: nowrap;
+            flex-shrink: 0;
         }
+
         .btn-filter-clear:hover {
-            background: rgba(255, 255, 255, 0.12);
-            color: #f8fafc;
+            background: rgba(239, 68, 68, 0.2);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: #fca5a5;
+        }
+
+        .btn-add-school-main {
+            height: 38px;
+            box-sizing: border-box;
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: #0f172a;
+            border: none;
+            padding: 0 0.95rem;
+            border-radius: 9px;
+            font-weight: 700;
+            font-size: 0.82rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(245, 158, 11, 0.28);
+            transition: all 0.2s ease;
+            white-space: nowrap;
+            flex-shrink: 0;
+            margin-left: auto;
+        }
+
+        .btn-add-school-main:hover {
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+            transform: translateY(-1px);
+        }
+
+        @media (max-width: 900px) {
+            .schools-filter-card {
+                flex-wrap: wrap;
+            }
+            .btn-add-school-main {
+                margin-left: 0;
+            }
         }
 
         /* -- Modern Schools Grid -- */
@@ -1685,102 +1791,7 @@ function getSchoolAvatarStyle($name) {
     <div class="dashboard-container">
         
         <!-- Sidebar -->
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <div class="logo">
-                    <?php echo getSystemLogo('logo-icon'); ?>
-                    <h2><?php echo htmlspecialchars(getSystemConfig('short_name')); ?></h2>
-                </div>
-                <button class="sidebar-toggle" id="sidebarToggle">
-                    <i class="fa-solid fa-bars"></i>
-                </button>
-            </div>
-            
-                        <nav class="sidebar-nav">
-                <a href="admin_dashboard.php" class="nav-item">
-                    <i class="fa-solid fa-chart-line"></i>
-                    <span>Dashboard</span>
-                </a>
-                <a href="manage_students.php" class="nav-item">
-                    <i class="fa-solid fa-users"></i>
-                    <span>Manage Students</span>
-                </a>
-
-                <!-- Assessments Group -->
-                <div class="nav-group">
-                    <button class="nav-group-toggle" onclick="toggleNavGroup(this)">
-                        <i class="fa-solid fa-clipboard-check group-icon"></i>
-                        <span>Assessments</span>
-                        <i class="fa-solid fa-chevron-down chevron"></i>
-                    </button>
-                    <div class="nav-submenu">
-                        <a href="manage_questions.php" class="nav-subitem">
-                            <i class="fa-solid fa-circle-question"></i>
-                            Manage Questions
-                        </a>
-                        <a href="ongoing_assessments.php" class="nav-subitem">
-                            <i class="fa-solid fa-spinner"></i>
-                            Ongoing Assessments
-                        </a>
-                        <a href="admin_assessment_results.php" class="nav-subitem">
-                            <i class="fa-solid fa-file-circle-check"></i>
-                            Assessment History
-                        </a>
-                        <a href="admin-assessments.php" class="nav-subitem">
-                            <i class="fa-solid fa-eye"></i>
-                            Assessment Answers
-                        </a>
-                    </div>
-                </div>
-
-                <!-- Career Management Group -->
-                <div class="nav-group">
-                    <button class="nav-group-toggle open active-group" onclick="toggleNavGroup(this)">
-                        <i class="fa-solid fa-briefcase group-icon"></i>
-                        <span>Career Management</span>
-                        <i class="fa-solid fa-chevron-down chevron"></i>
-                    </button>
-                    <div class="nav-submenu open">
-                        <a href="manage_clusters.php" class="nav-subitem">
-                            <i class="fa-solid fa-layer-group"></i>
-                            Manage Career Clusters
-                        </a>
-                        <a href="manage_courses.php" class="nav-subitem">
-                            <i class="fa-solid fa-book-open"></i>
-                            Manage Courses
-                        </a>
-                        <a href="manage_schools.php" class="nav-subitem active">
-                            <i class="fa-solid fa-school"></i>
-                            Manage Schools
-                        </a>
-                        <a href="manage_jobs.php" class="nav-subitem">
-                            <i class="fa-solid fa-hard-hat"></i>
-                            Manage Jobs
-                        </a>
-                    </div>
-                </div>
-
-                <a href="reports.php" class="nav-item">
-                    <i class="fa-solid fa-chart-bar"></i>
-                    <span>Reports</span>
-                </a>
-                <a href="activity_logs.php" class="nav-item">
-                    <i class="fa-solid fa-clock-rotate-left"></i>
-                    <span>Activity Logs</span>
-                </a>
-                <a href="settings.php" class="nav-item">
-                    <i class="fa-solid fa-gear"></i>
-                    <span>Settings</span>
-                </a>
-
-                <div class="nav-separator"></div>
-
-                <a href="logout.php?role=admin" class="nav-item logout">
-                    <i class="fa-solid fa-right-from-bracket"></i>
-                    <span>Logout</span>
-                </a>
-            </nav>
-        </aside>
+        <?php require_once __DIR__ . '/includes/staff_sidebar.php'; ?>
 
         <!-- Main Content -->
         <main class="main-content">
@@ -1793,32 +1804,37 @@ function getSchoolAvatarStyle($name) {
                     <h1>Manage Schools</h1>
                 </div>
                 <?php 
-                // Get admin name
-                $userName = $_SESSION['admin_name'] ?? 'Admin User';
+                // Get staff name
+                $userName = get_staff_name();
+                $staffId = get_staff_id();
+                $staffRole = get_staff_role() === 'counselor' ? 'counselor' : 'admin';
                 
                 // Get notifications
                 $notifications = [];
                 $unreadCount = 0;
-                $adminId = $_SESSION['admin_id'] ?? null;
                 $adminProfilePic = null;
                 
-                if ($adminId) {
-                    // Get admin profile picture
-                    $profileStmt = $mysqli->prepare("SELECT profile_picture FROM admins WHERE id = ? LIMIT 1");
-                    $profileStmt->bind_param('i', $adminId);
-                    $profileStmt->execute();
-                    $profileResult = $profileStmt->get_result();
-                    $adminData = $profileResult->fetch_assoc();
-                    $adminProfilePic = $adminData['profile_picture'] ?? null;
-                    $profileStmt->close();
-                    $countStmt = $mysqli->prepare("SELECT COUNT(*) as count FROM notifications WHERE (user_id = ? OR user_id IS NULL) AND user_type = 'admin' AND is_read = 0");
-                    $countStmt->bind_param('i', $adminId);
+                if ($staffId) {
+                    // Get profile picture based on role (Counselors don't have a profile_picture column)
+                    if ($staffRole === 'admin') {
+                        $profileStmt = $mysqli->prepare("SELECT profile_picture FROM admins WHERE id = ? LIMIT 1");
+                        $profileStmt->bind_param('i', $staffId);
+                        $profileStmt->execute();
+                        $profileResult = $profileStmt->get_result();
+                        if ($adminData = $profileResult->fetch_assoc()) {
+                            $adminProfilePic = $adminData['profile_picture'] ?? null;
+                        }
+                        $profileStmt->close();
+                    }
+                    
+                    $countStmt = $mysqli->prepare("SELECT COUNT(*) as count FROM notifications WHERE (user_id = ? OR user_id IS NULL) AND user_type = ? AND is_read = 0");
+                    $countStmt->bind_param('is', $staffId, $staffRole);
                     $countStmt->execute();
                     $unreadCount = $countStmt->get_result()->fetch_assoc()['count'] ?? 0;
                     $countStmt->close();
                     
-                    $notifStmt = $mysqli->prepare("SELECT * FROM notifications WHERE (user_id = ? OR user_id IS NULL) AND user_type = 'admin' ORDER BY created_at DESC LIMIT 10");
-                    $notifStmt->bind_param('i', $adminId);
+                    $notifStmt = $mysqli->prepare("SELECT * FROM notifications WHERE (user_id = ? OR user_id IS NULL) AND user_type = ? ORDER BY created_at DESC LIMIT 10");
+                    $notifStmt->bind_param('is', $staffId, $staffRole);
                     $notifStmt->execute();
                     $result = $notifStmt->get_result();
                     while ($row = $result->fetch_assoc()) {
@@ -1869,9 +1885,13 @@ function getSchoolAvatarStyle($name) {
                     <div class="user-profile">
                         <div class="user-avatar">
                             <?php if ($adminProfilePic && file_exists(__DIR__ . '/' . $adminProfilePic)): ?>
-                                <img src="<?php echo htmlspecialchars($adminProfilePic); ?>" alt="Admin" class="avatar-img">
+                                <img src="<?php echo htmlspecialchars($adminProfilePic); ?>" alt="Profile" class="avatar-img">
                             <?php else: ?>
-                                <i class="fa-solid fa-user-shield"></i>
+                                <?php if ($staffRole === 'counselor'): ?>
+                                    <i class="fa-solid fa-user-tie"></i>
+                                <?php else: ?>
+                                    <i class="fa-solid fa-user-shield"></i>
+                                <?php endif; ?>
                             <?php endif; ?>
                         </div>
                         <div class="user-dropdown">
@@ -1884,75 +1904,61 @@ function getSchoolAvatarStyle($name) {
             <!-- Dashboard Content -->
             <div class="dashboard-content">
                 
-                <!-- Page Header with Title, Count Badge & Add Button -->
-                <div class="schools-page-header">
-                    <div class="header-title-box">
-                        <span class="schools-count-badge" id="schoolsTotalCount">
-                            <i class="fa-solid fa-school"></i>
-                            <span id="schoolsCountText"><?php echo count($schools); ?> Schools</span>
-                        </span>
+                <!-- Modern Search, Filter & Action Toolbar (Single Row) -->
+                <div class="schools-filter-card">
+                    <span class="schools-count-badge" id="schoolsTotalCount">
+                        <i class="fa-solid fa-school"></i>
+                        <span id="schoolsCountText"><?php echo count($schools); ?> Schools</span>
+                    </span>
+                    
+                    <div class="filter-input-wrap search-input-wrap">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="searchSchoolName" placeholder="Search school...">
                     </div>
+
+                    <div class="filter-input-wrap select-wrap">
+                        <i class="fa-solid fa-location-dot"></i>
+                        <select id="searchProvince">
+                            <option value="">All Provinces</option>
+                            <?php foreach ($allProvinces as $provOption): ?>
+                            <option value="<?php echo htmlspecialchars($provOption['provDesc']); ?>"><?php echo htmlspecialchars(formatLocationName($provOption['provDesc'])); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="filter-input-wrap select-wrap">
+                        <i class="fa-solid fa-city"></i>
+                        <select id="searchCity">
+                            <option value="">All Cities</option>
+                            <?php foreach ($pangasinanCities as $cityOption): ?>
+                            <option value="<?php echo htmlspecialchars($cityOption['citymunDesc']); ?>"><?php echo htmlspecialchars(formatLocationName($cityOption['citymunDesc'])); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="filter-input-wrap select-wrap">
+                        <i class="fa-solid fa-map-location-dot"></i>
+                        <select id="searchDistrict">
+                            <option value="">All Districts</option>
+                            <?php foreach ($allDistricts as $district): ?>
+                            <option value="<?php echo $district['id']; ?>"><?php echo htmlspecialchars($district['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <button type="button" class="btn-filter-search" id="searchBtn">
+                        <i class="fa-solid fa-filter"></i> Search
+                    </button>
+                    <button type="button" class="btn-filter-clear" id="clearBtn">
+                        <i class="fa-solid fa-rotate-left"></i> Clear
+                    </button>
+
+                    <?php if (is_admin()): ?>
                     <button class="btn-add-school-main" id="addSchoolBtn">
                         <i class="fa-solid fa-plus"></i>
                         <span>Add School</span>
                     </button>
-                </div>
-
-                <!-- Modern Search & Filter Toolbar -->
-                <div class="schools-filter-card">
-                    <div class="filter-grid">
-                        <div class="filter-field">
-                            <label for="searchSchoolName">School Name</label>
-                            <div class="filter-input-wrap">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="text" id="searchSchoolName" placeholder="Search by school name...">
-                            </div>
-                        </div>
-                        <div class="filter-field">
-                            <label for="searchCity">City / Municipality</label>
-                            <div class="filter-input-wrap">
-                                <i class="fa-solid fa-city"></i>
-                                <select id="searchCity">
-                                    <option value="">All Cities</option>
-                                    <?php foreach ($pangasinanCities as $cityOption): ?>
-                                    <option value="<?php echo htmlspecialchars($cityOption['citymunDesc']); ?>"><?php echo htmlspecialchars(formatLocationName($cityOption['citymunDesc'])); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="filter-field">
-                            <label for="searchProvince">Province</label>
-                            <div class="filter-input-wrap">
-                                <i class="fa-solid fa-location-dot"></i>
-                                <select id="searchProvince">
-                                    <option value="">Provinces</option>
-                                    <?php foreach ($allProvinces as $provOption): ?>
-                                    <option value="<?php echo htmlspecialchars($provOption['provDesc']); ?>"><?php echo htmlspecialchars(formatLocationName($provOption['provDesc'])); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="filter-field">
-                            <label for="searchDistrict">District</label>
-                            <div class="filter-input-wrap">
-                                <i class="fa-solid fa-map-location-dot"></i>
-                                <select id="searchDistrict">
-                                    <option value="">All Districts</option>
-                                    <?php foreach ($allDistricts as $district): ?>
-                                    <option value="<?php echo $district['id']; ?>"><?php echo htmlspecialchars($district['name']); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="filter-btn-group">
-                            <button type="button" class="btn-filter-search" id="searchBtn">
-                                <i class="fa-solid fa-filter"></i> Search
-                            </button>
-                            <button type="button" class="btn-filter-clear" id="clearBtn">
-                                <i class="fa-solid fa-rotate-left"></i> Clear
-                            </button>
-                        </div>
-                    </div>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Schools Grid -->
@@ -2023,19 +2029,46 @@ function getSchoolAvatarStyle($name) {
                                 </div>
                             </div>
 
-                            <div class="school-card-actions school-actions">
-                                <button type="button" class="btn-card-action btn-action view" data-id="<?php echo $school['id']; ?>" title="View School Details">
-                                    <i class="fa-solid fa-eye"></i>
-                                    <span>View</span>
+                            <?php if (is_admin()): ?>
+                            <div class="school-card-actions">
+                                <button class="btn-card-action view btn-view-school" 
+                                    data-id="<?php echo $school['id']; ?>"
+                                    aria-label="View Details">
+                                    <i class="fa-solid fa-eye"></i> View
                                 </button>
-                                <button type="button" class="btn-card-action btn-action edit" data-id="<?php echo $school['id']; ?>" title="Edit School">
-                                    <i class="fa-solid fa-pen"></i>
-                                    <span>Edit</span>
+                                
+                                <button class="btn-card-action edit btn-edit-school" 
+                                    data-id="<?php echo $school['id']; ?>"
+                                    data-name="<?php echo htmlspecialchars($school['name']); ?>"
+                                    data-address="<?php echo htmlspecialchars($school['address']); ?>"
+                                    data-city-id="<?php echo $school['city_id']; ?>"
+                                    data-province-id="<?php echo $school['province_id']; ?>"
+                                    data-district-id="<?php echo $school['district_id'] ?? ''; ?>"
+                                    data-contact="<?php echo htmlspecialchars($school['contact']); ?>"
+                                    data-email="<?php echo htmlspecialchars($school['email']); ?>"
+                                    data-website="<?php echo htmlspecialchars($school['website']); ?>"
+                                    data-type="<?php echo htmlspecialchars($school['type']); ?>"
+                                    aria-label="Edit School">
+                                    <i class="fa-solid fa-pen-to-square"></i>
                                 </button>
-                                <button type="button" class="btn-card-action btn-action delete" data-id="<?php echo $school['id']; ?>" title="Delete School">
-                                    <i class="fa-solid fa-trash"></i>
+                                
+                                <button class="btn-card-action delete btn-delete-school" 
+                                    data-id="<?php echo $school['id']; ?>" 
+                                    data-name="<?php echo htmlspecialchars($school['name']); ?>"
+                                    data-course-count="<?php echo (int)($school['course_count'] ?? 0); ?>"
+                                    aria-label="Delete School">
+                                    <i class="fa-solid fa-trash-can"></i>
                                 </button>
                             </div>
+                            <?php else: ?>
+                            <div class="school-card-actions">
+                                <button class="btn-card-action view btn-view-school" style="flex: 1;"
+                                    data-id="<?php echo $school['id']; ?>"
+                                    aria-label="View Details">
+                                    <i class="fa-solid fa-eye"></i> View Details
+                                </button>
+                            </div>
+                            <?php endif; ?>
                         </div>
                         <?php endforeach; ?>
                     <?php endif; ?>
@@ -2079,19 +2112,19 @@ function getSchoolAvatarStyle($name) {
                      </div>
                      <div class="form-row three-cols">
                          <div class="form-group">
+                             <label for="addProvince">Province <span class="required">*</span></label>
+                             <select id="addProvince" name="province_id" required>
+                                 <?php foreach ($allProvinces as $provOption): ?>
+                                 <option value="<?php echo $provOption['id']; ?>" <?php echo $provOption['id'] == 4 ? 'selected' : 'disabled'; ?>><?php echo htmlspecialchars(formatLocationName($provOption['provDesc'])); ?></option>
+                                 <?php endforeach; ?>
+                             </select>
+                         </div>
+                         <div class="form-group">
                              <label for="addCity">City/Municipality <span class="required">*</span></label>
                              <select id="addCity" name="city_id" required>
                                  <option value="">Select City/Municipality</option>
                                  <?php foreach ($pangasinanCities as $cityOption): ?>
                                  <option value="<?php echo $cityOption['id']; ?>"><?php echo htmlspecialchars(formatLocationName($cityOption['citymunDesc'])); ?></option>
-                                 <?php endforeach; ?>
-                             </select>
-                         </div>
-                         <div class="form-group">
-                             <label for="addProvince">Province <span class="required">*</span></label>
-                             <select id="addProvince" name="province_id" required>
-                                 <?php foreach ($allProvinces as $provOption): ?>
-                                 <option value="<?php echo $provOption['id']; ?>" <?php echo $provOption['id'] == 4 ? 'selected' : 'disabled'; ?>><?php echo htmlspecialchars(formatLocationName($provOption['provDesc'])); ?></option>
                                  <?php endforeach; ?>
                              </select>
                          </div>
@@ -2120,8 +2153,8 @@ function getSchoolAvatarStyle($name) {
                              <input type="text" id="addContact" name="contact" placeholder="Phone number (optional)">
                          </div>
                          <div class="form-group">
-                             <label for="addType">School Type</label>
-                             <select id="addType" name="type">
+                             <label for="addType">School Type <span class="required">*</span></label>
+                             <select id="addType" name="type" required>
                                  <option value="">Select Type</option>
                                  <option value="Public (SUC)">Public (SUC)</option>
                                 <option value="Public (LUC)">Public (LUC)</option>
@@ -2141,7 +2174,7 @@ function getSchoolAvatarStyle($name) {
                                      <i class="fa-solid fa-graduation-cap"></i>
                                  </div>
                                  <div class="co-header-titles">
-                                     <span class="co-header-title">Courses Offered</span>
+                                     <span class="co-header-title">Courses Offered <span class="required" style="color: #ef4444;">*</span></span>
                                      <span class="co-header-subtitle">Search programs &amp; click the star <i class="fa-solid fa-star" style="color:#fbbf24; font-size:0.75rem;"></i> to mark as <strong>Best in Course</strong> (Specialization)</span>
                                  </div>
                              </div>
@@ -2159,7 +2192,7 @@ function getSchoolAvatarStyle($name) {
                          <div class="co-chips-container" id="addCoChips">
                              <div class="co-empty-state" id="addCoNoneHint">
                                  <i class="fa-solid fa-folder-open"></i>
-                                 <span>No courses linked yet. Type in the box above to search and add courses.</span>
+                                 <span>No courses added yet. Please search and add at least one course offered by this school.</span>
                              </div>
                          </div>
                      </div>
@@ -2196,19 +2229,19 @@ function getSchoolAvatarStyle($name) {
                      </div>
                      <div class="form-row three-cols">
                          <div class="form-group">
+                             <label for="editProvince">Province <span class="required">*</span></label>
+                             <select id="editProvince" name="province_id" required>
+                                 <?php foreach ($allProvinces as $provOption): ?>
+                                 <option value="<?php echo $provOption['id']; ?>" <?php echo $provOption['id'] == 4 ? 'selected' : 'disabled'; ?>><?php echo htmlspecialchars(formatLocationName($provOption['provDesc'])); ?></option>
+                                 <?php endforeach; ?>
+                             </select>
+                         </div>
+                         <div class="form-group">
                              <label for="editCity">City/Municipality <span class="required">*</span></label>
                              <select id="editCity" name="city_id" required>
                                  <option value="">Select City/Municipality</option>
                                  <?php foreach ($pangasinanCities as $cityOption): ?>
                                  <option value="<?php echo $cityOption['id']; ?>"><?php echo htmlspecialchars(formatLocationName($cityOption['citymunDesc'])); ?></option>
-                                 <?php endforeach; ?>
-                             </select>
-                         </div>
-                         <div class="form-group">
-                             <label for="editProvince">Province <span class="required">*</span></label>
-                             <select id="editProvince" name="province_id" required>
-                                 <?php foreach ($allProvinces as $provOption): ?>
-                                 <option value="<?php echo $provOption['id']; ?>" <?php echo $provOption['id'] == 4 ? 'selected' : 'disabled'; ?>><?php echo htmlspecialchars(formatLocationName($provOption['provDesc'])); ?></option>
                                  <?php endforeach; ?>
                              </select>
                          </div>
@@ -2237,8 +2270,8 @@ function getSchoolAvatarStyle($name) {
                              <input type="text" id="editContact" name="contact" placeholder="Phone number (optional)">
                          </div>
                          <div class="form-group">
-                             <label for="editType">School Type</label>
-                             <select id="editType" name="type">
+                             <label for="editType">School Type <span class="required">*</span></label>
+                             <select id="editType" name="type" required>
                                  <option value="">Select Type</option>
                                  <option value="Public (SUC)">Public (SUC)</option>
                                  <option value="Public (LUC)">Public (LUC)</option>
@@ -2259,7 +2292,7 @@ function getSchoolAvatarStyle($name) {
                                  <i class="fa-solid fa-graduation-cap"></i>
                              </div>
                              <div class="co-header-titles">
-                                 <span class="co-header-title">Courses Offered</span>
+                                 <span class="co-header-title">Courses Offered <span class="required" style="color: #ef4444;">*</span></span>
                                  <span class="co-header-subtitle">Search programs & click the star <i class="fa-solid fa-star" style="color:#fbbf24; font-size:0.75rem;"></i> to mark as <strong>Best in Course</strong> (Specialization)</span>
                              </div>
                          </div>
@@ -2277,7 +2310,7 @@ function getSchoolAvatarStyle($name) {
                      <div class="co-chips-container" id="coChips">
                          <div class="co-empty-state" id="coNoneHint">
                              <i class="fa-solid fa-folder-open"></i>
-                             <span>No courses linked yet. Type in the box above to search and add courses.</span>
+                             <span>No courses added yet. Please search and add at least one course offered by this school.</span>
                          </div>
                      </div>
                  </div>
@@ -2294,7 +2327,7 @@ function getSchoolAvatarStyle($name) {
     <div class="modal" id="deleteSchoolModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2><i class="fa-solid fa-trash-can"></i> Delete School</h2>
+                <h2><i class="fa-solid fa-trash-can"></i> <span id="deleteSchoolModalTitle">Delete School</span></h2>
                 <button class="modal-close" id="closeDeleteModal">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
@@ -2302,9 +2335,9 @@ function getSchoolAvatarStyle($name) {
             <div class="modal-body">
                 <div class="delete-confirm-message">
                     <i class="fa-solid fa-triangle-exclamation"></i>
-                    <p>Are you sure you want to delete this school?</p>
+                    <p id="deleteSchoolMessage">Are you sure you want to delete this school?</p>
                     <p class="delete-school-name" id="deleteSchoolName"></p>
-                    <small>This action cannot be undone.</small>
+                    <small id="deleteSchoolWarning">This action cannot be undone.</small>
                 </div>
             </div>
             <div class="modal-footer">
@@ -2454,6 +2487,132 @@ function getSchoolAvatarStyle($name) {
     <script src="admin.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+
+            // ---------------------------------------------------------------
+            // CITY → DISTRICT MAPPING (Pangasinan Congressional Districts)
+            // Keys are city IDs from refcitymun, values are district IDs from districts table
+            // Based on Pangasinan's official 6 congressional districts
+            // ---------------------------------------------------------------
+            const cityToDistrict = {
+                // 1st District
+                78:  1, // Agno
+                80:  1, // City of Alaminos
+                82:  1, // Anda
+                85:  1, // Bani
+                91:  1, // Bolinao
+                93:  1, // Burgos
+                96:  1, // Dasol
+                97:  1, // Infanta
+                98:  1, // Labrador
+                100: 1, // Mabini
+                104: 1, // Mangatarem
+                119: 1, // Sual
+                // 2nd District
+                79:  2, // Aguilar
+                86:  2, // Basista
+                90:  2, // Binmaley
+                92:  2, // Bugallon
+                94:  2, // Calasiao
+                95:  2, // Dagupan City
+                99:  2, // Lingayen (Capital)
+                101: 2, // Malasiqui
+                103: 2, // Mangaldan
+                105: 2, // Mapandan
+                113: 2, // San Nicolas
+                116: 2, // Santa Maria
+                122: 2, // Urbiztondo
+                // 3rd District
+                87:  3, // Bautista
+                88:  3, // Bayambang
+                106: 3, // Natividad
+                108: 3, // Rosales
+                109: 3, // San Carlos City
+                111: 3, // San Jacinto
+                114: 3, // San Quintin
+                120: 3, // Tayug
+                121: 3, // Umingan
+                124: 3, // Villasis
+                125: 3, // Laoac
+                // 4th District
+                81:  4, // Alcala
+                89:  4, // Binalonan
+                102: 4, // Manaoag
+                107: 4, // Pozorrubio
+                110: 4, // San Fabian
+                112: 4, // San Manuel
+                115: 4, // Santa Barbara
+                117: 4, // Santo Tomas
+                118: 4, // Sison
+                123: 4, // City of Urdaneta
+                // 5th District
+                83:  5, // Asingan
+                84:  5, // Balungao
+                // 6th District
+            };
+
+            /**
+             * Filter the district dropdown based on a selected city ID.
+             * @param {string} citySel - The city <select> element ID
+             * @param {string} distSel - The district <select> element ID
+             * @param {number|string} [forceDistrictId] - If provided, pre-select this district after filtering
+             */
+            function filterDistrictsByCity(citySel, distSel, forceDistrictId = null) {
+                const citySelect = document.getElementById(citySel);
+                const distSelect = document.getElementById(distSel);
+                if (!citySelect || !distSelect) return;
+
+                const cityId = parseInt(citySelect.value) || 0;
+                const mappedDistrictId = cityId ? (cityToDistrict[cityId] || 0) : 0;
+
+                // Show/hide options and set visual hint
+                Array.from(distSelect.options).forEach(opt => {
+                    if (!opt.value) return; // keep placeholder
+                    const distId = parseInt(opt.value);
+                    if (mappedDistrictId && distId !== mappedDistrictId) {
+                        opt.hidden = true;
+                        opt.disabled = true;
+                    } else {
+                        opt.hidden = false;
+                        opt.disabled = false;
+                    }
+                });
+
+                // Auto-select the matching district
+                if (forceDistrictId) {
+                    distSelect.value = forceDistrictId;
+                } else if (mappedDistrictId) {
+                    distSelect.value = mappedDistrictId;
+                } else if (!cityId) {
+                    distSelect.value = '';
+                }
+
+                // Visual feedback on district select
+                if (cityId && !mappedDistrictId) {
+                    distSelect.style.borderColor = '';
+                } else if (cityId && mappedDistrictId) {
+                    distSelect.style.borderColor = 'rgba(99,102,241,0.6)';
+                } else {
+                    distSelect.style.borderColor = '';
+                    distSelect.value = '';
+                }
+            }
+
+            // Wire Add form: city change → filter districts
+            const addCitySelect = document.getElementById('addCity');
+            if (addCitySelect) {
+                addCitySelect.addEventListener('change', function() {
+                    filterDistrictsByCity('addCity', 'addDistrict');
+                });
+            }
+
+            // Wire Edit form: city change → filter districts
+            const editCitySelect = document.getElementById('editCity');
+            if (editCitySelect) {
+                editCitySelect.addEventListener('change', function() {
+                    filterDistrictsByCity('editCity', 'editDistrict');
+                });
+            }
+            // ---------------------------------------------------------------
             function showStatusModal(title, message, isSuccess, callback = null) {
                 const modal = document.getElementById('statusModal');
                 const icon = document.getElementById('statusIcon');
@@ -2520,7 +2679,7 @@ function getSchoolAvatarStyle($name) {
             let deleteSchoolId = null;
 
             // Open Add Modal
-            addSchoolBtn.addEventListener('click', function() {
+            addSchoolBtn?.addEventListener('click', function() {
                 addSchoolForm.reset();
                 addCoursesManager.clearCourses();
                 const addProv = document.getElementById('addProvince');
@@ -2546,7 +2705,7 @@ function getSchoolAvatarStyle($name) {
             if (closeViewBtn) closeViewBtn.addEventListener('click', closeView);
 
             // Open View Modal
-            document.querySelectorAll('.school-actions .btn-action.view').forEach(btn => {
+            document.querySelectorAll('.btn-view-school').forEach(btn => {
                 btn.addEventListener('click', async function() {
                     const schoolId = this.getAttribute('data-id');
                     const fd = new FormData();
@@ -2650,7 +2809,7 @@ function getSchoolAvatarStyle($name) {
                 viewEditBtnSchool.addEventListener('click', function() {
                     const schoolId = this.getAttribute('data-id');
                     closeView();
-                    const editBtn = document.querySelector(`.school-actions .btn-action.edit[data-id="${schoolId}"]`);
+                    const editBtn = document.querySelector(`.btn-edit-school[data-id="${schoolId}"]`);
                     if (editBtn) {
                         editBtn.click();
                     }
@@ -3037,7 +3196,7 @@ function getSchoolAvatarStyle($name) {
             // ------------------------------------------------------------------
 
             // Open Edit Modal
-            document.querySelectorAll('.school-actions .btn-action.edit').forEach(btn => {
+            document.querySelectorAll('.btn-edit-school').forEach(btn => {
                 btn.addEventListener('click', async function() {
                     const schoolId = this.getAttribute('data-id');
                     
@@ -3080,8 +3239,8 @@ function getSchoolAvatarStyle($name) {
                                 editProvSelect.value = '4';
                             }
 
-                            // District
-                            document.getElementById('editDistrict').value = school.district_id || '';
+                            // District — filter by city first, then pre-select saved district
+                            filterDistrictsByCity('editCity', 'editDistrict', school.district_id || '');
                             document.getElementById('editEmail').value = school.email || '';
                             document.getElementById('editWebsite').value = school.website || '';
                             document.getElementById('editContact').value = school.contact || '';
@@ -3117,15 +3276,52 @@ function getSchoolAvatarStyle($name) {
                 });
             });
 
+            let unlinkSchoolCoursesMode = false;
+
             // Open Delete Modal
-            document.querySelectorAll('.school-actions .btn-action.delete').forEach(btn => {
-                btn.addEventListener('click', function() {
+            document.querySelectorAll('.btn-delete-school').forEach(btn => {
+                btn.addEventListener('click', async function() {
                     const schoolId = this.getAttribute('data-id');
                     const schoolCard = this.closest('.school-card');
-                    const schoolName = schoolCard.querySelector('.school-name').textContent;
+                    const schoolName = this.getAttribute('data-name') || schoolCard?.querySelector('.school-name')?.textContent || '';
                     
                     deleteSchoolId = schoolId;
-                    document.getElementById('deleteSchoolName').textContent = schoolName;
+                    unlinkSchoolCoursesMode = false;
+
+                    const titleEl = document.getElementById('deleteSchoolModalTitle');
+                    const msgEl = document.getElementById('deleteSchoolMessage');
+                    const nameEl = document.getElementById('deleteSchoolName');
+                    const warningEl = document.getElementById('deleteSchoolWarning');
+                    const confirmBtn = document.getElementById('confirmDelete');
+
+                    if (nameEl) nameEl.textContent = schoolName;
+
+                    // Check associations in course_schools
+                    let courseCount = parseInt(this.getAttribute('data-course-count') || '0', 10);
+                    try {
+                        const fd = new FormData();
+                        fd.append('action', 'check_school_associations');
+                        fd.append('id', schoolId);
+                        const res = await apiPost(fd);
+                        if (res && res.success && typeof res.count !== 'undefined') {
+                            courseCount = res.count;
+                        }
+                    } catch (e) {}
+
+                    if (courseCount > 0) {
+                        unlinkSchoolCoursesMode = true;
+                        if (titleEl) titleEl.textContent = 'Delete School?';
+                        if (msgEl) msgEl.textContent = 'This school is currently associated with one or more courses. Deleting this school will remove its course associations. The courses themselves will not be deleted.';
+                        if (warningEl) warningEl.textContent = `(${courseCount} course association${courseCount > 1 ? 's' : ''} will be unlinked)`;
+                        if (confirmBtn) confirmBtn.textContent = 'Unlink Courses & Delete';
+                    } else {
+                        unlinkSchoolCoursesMode = false;
+                        if (titleEl) titleEl.textContent = 'Delete School';
+                        if (msgEl) msgEl.textContent = 'Are you sure you want to delete this school?';
+                        if (warningEl) warningEl.textContent = 'This action cannot be undone.';
+                        if (confirmBtn) confirmBtn.textContent = 'Delete';
+                    }
+
                     deleteSchoolModal.classList.add('active');
                 });
             });
@@ -3151,11 +3347,26 @@ function getSchoolAvatarStyle($name) {
             addSchoolForm.addEventListener('submit', async function(e) {
                 e.preventDefault();
                 
+                if (!this.checkValidity()) {
+                    this.reportValidity();
+                    return;
+                }
+
+                const schoolType = this.querySelector('select[name="type"]')?.value?.trim();
+                if (!schoolType) {
+                    showStatusModal('Validation Error', 'Please select a School Type.', false);
+                    return;
+                }
+
                 const formData = new FormData(this);
                 formData.append('action', 'add_school');
 
                 // Append selected course IDs and specialized course IDs from Add modal
                 const addIds = Object.keys(addSelectedCourses).map(Number);
+                if (addIds.length === 0) {
+                    showStatusModal('Validation Error', 'Please add at least one course offered by this school before creating.', false);
+                    return;
+                }
                 const addSpecIds = addIds.filter(id => addSelectedCourses[id].is_specialization === 1);
                 formData.append('offered_course_ids', JSON.stringify(addIds));
                 formData.append('specialized_course_ids', JSON.stringify(addSpecIds));
@@ -3175,11 +3386,26 @@ function getSchoolAvatarStyle($name) {
             editSchoolForm.addEventListener('submit', async function(e) {
                 e.preventDefault();
                 
+                if (!this.checkValidity()) {
+                    this.reportValidity();
+                    return;
+                }
+
+                const schoolType = this.querySelector('select[name="type"]')?.value?.trim();
+                if (!schoolType) {
+                    showStatusModal('Validation Error', 'Please select a School Type.', false);
+                    return;
+                }
+
                 const formData = new FormData(this);
                 formData.append('action', 'edit_school');
 
                 // Append selected course IDs and specialized course IDs from Edit modal
                 const selectedIds = Object.keys(editSelectedCourses).map(Number);
+                if (selectedIds.length === 0) {
+                    showStatusModal('Validation Error', 'Please select at least one course offered by this school.', false);
+                    return;
+                }
                 const specializedIds = selectedIds.filter(id => editSelectedCourses[id].is_specialization === 1);
                 formData.append('offered_course_ids', JSON.stringify(selectedIds));
                 formData.append('specialized_course_ids', JSON.stringify(specializedIds));
@@ -3201,6 +3427,9 @@ function getSchoolAvatarStyle($name) {
                     const fd = new FormData();
                     fd.append('action', 'delete_school');
                     fd.append('id', deleteSchoolId);
+                    if (unlinkSchoolCoursesMode) {
+                        fd.append('unlink_courses', '1');
+                    }
                     
                     try {
                         const data = await apiPost(fd);
@@ -3267,20 +3496,29 @@ function getSchoolAvatarStyle($name) {
                 runSearch();
             });
 
+            // Auto trigger search while typing in school name
+            if (searchSchoolName) {
+                searchSchoolName.addEventListener('input', runSearch);
+            }
+
             // Allow Enter key to trigger search
             [searchSchoolName, searchCity, searchProvince, searchDistrict].forEach(input => {
-                input.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') {
-                        searchBtn.click();
-                    }
-                });
+                if (input) {
+                    input.addEventListener('keypress', function(e) {
+                        if (e.key === 'Enter') {
+                            searchBtn.click();
+                        }
+                    });
+                }
             });
 
             // Auto trigger search on dropdown change
             [searchDistrict, searchCity, searchProvince].forEach(select => {
-                select.addEventListener('change', function() {
-                    searchBtn.click();
-                });
+                if (select) {
+                    select.addEventListener('change', function() {
+                        searchBtn.click();
+                    });
+                }
             });
         });
     </script>

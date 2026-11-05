@@ -124,10 +124,15 @@
 
             </div>
         </div>
-        <div class="modal-footer" style="padding: 1rem 1.75rem; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center;">
-            <a id="detailViewAnswersBtn" href="#" style="display: none; align-items: center; gap: 8px; text-decoration: none; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); padding: 0.55rem 1.2rem; border-radius: 8px; font-size: 0.88rem; font-weight: 600; transition: all 0.2s;">
-                <i class="fa-solid fa-clipboard-check"></i> View Full Answers
-            </a>
+        <div class="modal-footer" style="padding: 1rem 1.75rem; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <a id="detailViewAnswersBtn" href="#" style="display: none; align-items: center; gap: 8px; text-decoration: none; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); padding: 0.55rem 1.2rem; border-radius: 8px; font-size: 0.88rem; font-weight: 600; transition: all 0.2s;">
+                    <i class="fa-solid fa-clipboard-check"></i> View Full Answers
+                </a>
+                <a id="detailReviewBtn" href="#" style="display: none; align-items: center; gap: 8px; text-decoration: none; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); padding: 0.55rem 1.2rem; border-radius: 8px; font-size: 0.88rem; font-weight: 600; transition: all 0.2s;">
+                    <i class="fa-solid fa-stamp"></i> Review / Return Assessment
+                </a>
+            </div>
             <button type="button" class="btn-secondary" id="closeDetailsBtn" style="margin-left: auto;">Close</button>
         </div>
     </div>

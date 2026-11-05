@@ -58,12 +58,12 @@ $maskedEmail = password_reset_mask_email($ctx['email']);
                 <div class="form-group">
                     <label>Verification Code</label>
                     <div class="otp-inputs">
-                        <input type="text" name="otp1" class="otp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required autocomplete="one-time-code">
-                        <input type="text" name="otp2" class="otp-input" maxlength="1" pattern="[0-9]" required>
-                        <input type="text" name="otp3" class="otp-input" maxlength="1" pattern="[0-9]" required>
-                        <input type="text" name="otp4" class="otp-input" maxlength="1" pattern="[0-9]" required>
-                        <input type="text" name="otp5" class="otp-input" maxlength="1" pattern="[0-9]" required>
-                        <input type="text" name="otp6" class="otp-input" maxlength="1" pattern="[0-9]" required>
+                        <input type="tel" name="otp1" class="otp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required autocomplete="one-time-code" autocorrect="off" spellcheck="false">
+                        <input type="tel" name="otp2" class="otp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required autocomplete="off" autocorrect="off" spellcheck="false">
+                        <input type="tel" name="otp3" class="otp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required autocomplete="off" autocorrect="off" spellcheck="false">
+                        <input type="tel" name="otp4" class="otp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required autocomplete="off" autocorrect="off" spellcheck="false">
+                        <input type="tel" name="otp5" class="otp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required autocomplete="off" autocorrect="off" spellcheck="false">
+                        <input type="tel" name="otp6" class="otp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required autocomplete="off" autocorrect="off" spellcheck="false">
                     </div>
                 </div>
 

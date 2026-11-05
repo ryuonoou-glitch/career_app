@@ -425,9 +425,9 @@ sort($tabDistricts);
         .rc-confidence-banner p  { margin:0; color:#cbd5e1; font-size:0.85rem; line-height:1.5; }
 
         /* ── Footer note ─────────────────────────────── */
-        .rc-footer-note { display:flex; align-items:center; gap:8px; padding:0 0 1.5rem; }
-        .rc-footer-note i { color:#475569; font-size:0.8rem; flex-shrink:0; }
-        .rc-footer-note span { font-size:0.78rem; color:#475569; }
+        .rc-footer-note { display:flex; align-items:center; gap:8px; padding:0 0 1.5rem; justify-content: center; margin-top: 1rem; }
+        .rc-footer-note i { color:#60a5fa; font-size:1rem; flex-shrink:0; }
+        .rc-footer-note span { font-size:0.85rem; color:#cbd5e1; font-weight: 500; }
 
         /* ── Empty state ─────────────────────────────── */
         .rc-empty { text-align:center; padding:4rem 1rem; color:#64748b; }
@@ -1332,7 +1332,6 @@ sort($tabDistricts);
                 $tExpl    = trim($topCourse[\'explanation\'] ?? \'\');
                 $tPct     = (float)$topCourse[\'match_percentage\'];
                 $tDesc    = $topCourse[\'description\'] ?? \'\';
-                $tClusterPct = round((float)($topCourse[\'breakdown\'][\'cluster_alignment\'] ?? 0), 1);
                 $tSkillsPct  = round((float)($topCourse[\'breakdown\'][\'skills_part\'] ?? 0), 1);
                 $tCareerPct  = round((float)($topCourse[\'breakdown\'][\'career_part\'] ?? 0), 1);
                 $tPersonPct  = round((float)($topCourse[\'breakdown\'][\'personality_part\'] ?? 0), 1);
@@ -1371,17 +1370,7 @@ sort($tabDistricts);
 
                         <div class="rcm-bar-row">
                             <div class="rcm-bar-meta">
-                                <span class="rcm-bar-label">Cluster Alignment</span>
-                                <span class="rcm-bar-pct"><?php echo $tClusterPct; ?>%</span>
-                            </div>
-                            <div class="rcm-bar-track">
-                                <div class="rcm-bar-fill cluster" style="width:<?php echo min(100,$tClusterPct); ?>%;"></div>
-                            </div>
-                        </div>
-
-                        <div class="rcm-bar-row">
-                            <div class="rcm-bar-meta">
-                                <span class="rcm-bar-label">Competency Match</span>
+                                <span class="rcm-bar-label">Course Competency Match</span>
                                 <span class="rcm-bar-pct"><?php echo $tSkillsPct; ?>%</span>
                             </div>
                             <div class="rcm-bar-track">
@@ -1391,7 +1380,7 @@ sort($tabDistricts);
 
                         <div class="rcm-bar-row">
                             <div class="rcm-bar-meta">
-                                <span class="rcm-bar-label">Career Fit</span>
+                                <span class="rcm-bar-label">Career Interest</span>
                                 <span class="rcm-bar-pct"><?php echo $tCareerPct; ?>%</span>
                             </div>
                             <div class="rcm-bar-track">
@@ -1401,7 +1390,7 @@ sort($tabDistricts);
 
                         <div class="rcm-bar-row">
                             <div class="rcm-bar-meta">
-                                <span class="rcm-bar-label">Personality Match</span>
+                                <span class="rcm-bar-label">Personality & Traits</span>
                                 <span class="rcm-bar-pct"><?php echo $tPersonPct; ?>%</span>
                             </div>
                             <div class="rcm-bar-track">

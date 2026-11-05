@@ -83,7 +83,7 @@ function send_app_email(string $toEmail, string $toName, string $subject, string
         $mail->AltBody = $textBody;
 
         $replyTo = function_exists('getSystemConfig') ? getSystemConfig('email') : '';
-        if ($replyTo !== '' && filter_var($replyTo, FILTER_VALIDATE_EMAIL)) {
+        if ($replyTo !== '' && isValidEmailAddress($replyTo)) {
             $mail->addReplyTo($replyTo, $fromName);
         }
 
@@ -106,7 +106,7 @@ function send_signup_account_created_email(array $student): bool
     $fullName = preg_replace('/\s+/', ' ', $fullName);
 
     $email = $student['email'] ?? '';
-    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    if ($email === '' || !isValidEmailAddress($email)) {
         return false;
     }
 
@@ -161,7 +161,7 @@ function send_password_reset_otp_email(array $data): bool
     $otp = $data['otp'] ?? '';
     $expiresMinutes = (int) ($data['expires_minutes'] ?? 5);
 
-    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($otp) !== 6) {
+    if ($email === '' || !isValidEmailAddress($email) || strlen($otp) !== 6) {
         return false;
     }
 
@@ -199,7 +199,7 @@ function send_admin_created_account_email(array $student): bool
     $fullName   = preg_replace('/\s+/', ' ', trim($firstName . ' ' . $middleName . ' ' . $lastName));
 
     $email = $student['email'] ?? '';
-    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    if ($email === '' || !isValidEmailAddress($email)) {
         return false;
     }
 
@@ -274,7 +274,7 @@ function send_admin_created_counselor_email(array $counselor): bool
     $fullName   = preg_replace('/\s+/', ' ', trim($firstName . ' ' . $middleName . ' ' . $lastName));
 
     $email = $counselor['email'] ?? '';
-    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    if ($email === '' || !isValidEmailAddress($email)) {
         return false;
     }
 
@@ -337,7 +337,7 @@ function send_admin_created_admin_email(array $admin): bool
     $fullName   = preg_replace('/\s+/', ' ', trim($firstName . ' ' . $middleName . ' ' . $lastName));
 
     $email = $admin['email'] ?? '';
-    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    if ($email === '' || !isValidEmailAddress($email)) {
         return false;
     }
 

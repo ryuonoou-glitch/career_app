@@ -117,6 +117,15 @@ function ensureAssessmentRegionColumn($mysqli) {
     $mysqli->query("ALTER TABLE student_assessments ADD COLUMN region VARCHAR(100) NULL DEFAULT NULL");
 }
 
+function ensureMedicalDeclarationColumn($mysqli) {
+    $check = $mysqli->query("SHOW COLUMNS FROM student_assessments LIKE 'medical_declaration'");
+    if ($check && $check->num_rows > 0) {
+        return;
+    }
+
+    $mysqli->query("ALTER TABLE student_assessments ADD COLUMN medical_declaration TEXT NULL DEFAULT NULL");
+}
+
 function handleCreateAssessment($mysqli, &$response) {
     $studentId = intval($_POST['student_id'] ?? 0);
     $type = $_POST['type'] ?? '';
@@ -154,6 +163,7 @@ function handleCreateAssessment($mysqli, &$response) {
     }
     
     ensureAssessmentRegionColumn($mysqli);
+    ensureMedicalDeclarationColumn($mysqli);
     
     // Look up preferred_region from previous attempts in this school year if empty
     if (empty($preferredRegion)) {
@@ -181,11 +191,20 @@ function handleCreateAssessment($mysqli, &$response) {
         $abandonStmt->close();
     }
 
+    $medicalDeclaration = $_POST['medical_declaration'] ?? null;
+    $medicalDeclarationJson = null;
+    if ($medicalDeclaration) {
+        $decoded = json_decode($medicalDeclaration, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            $medicalDeclarationJson = json_encode($decoded);
+        }
+    }
+
     $stmt = $mysqli->prepare("
-        INSERT INTO student_assessments (student_id, school_year_id, status, region, preferred_region) 
-        VALUES (?, ?, 'in_progress', ?, ?)
+        INSERT INTO student_assessments (student_id, school_year_id, status, region, preferred_region, medical_declaration, expires_at) 
+        VALUES (?, ?, 'in_progress', ?, ?, ?, DATE_ADD(NOW(), INTERVAL 24 HOUR))
     ");
-    $stmt->bind_param('iiss', $studentId, $schoolYearId, $preferredRegion, $preferredRegion);
+    $stmt->bind_param('iisss', $studentId, $schoolYearId, $preferredRegion, $preferredRegion, $medicalDeclarationJson);
     
     if ($stmt->execute()) {
         $response['success'] = true;
@@ -212,7 +231,7 @@ function handleSaveAnswer($mysqli, &$response) {
     }
 
     // Verify assessment exists and is in_progress
-    $checkAssess = $mysqli->prepare("SELECT status FROM student_assessments WHERE id = ? LIMIT 1");
+    $checkAssess = $mysqli->prepare("SELECT status, expires_at FROM student_assessments WHERE id = ? LIMIT 1");
     if ($checkAssess) {
         $checkAssess->bind_param('i', $assessmentId);
         $checkAssess->execute();
@@ -225,9 +244,21 @@ function handleSaveAnswer($mysqli, &$response) {
             $response['invalid_assessment'] = true;
             return;
         }
+
+        // Check expiration
+        if ($assessRow['status'] === 'in_progress' && !empty($assessRow['expires_at']) && strtotime($assessRow['expires_at']) < time()) {
+            $expireStmt = $mysqli->prepare("UPDATE student_assessments SET status = 'abandoned' WHERE id = ?");
+            if ($expireStmt) {
+                $expireStmt->bind_param('i', $assessmentId);
+                $expireStmt->execute();
+                $expireStmt->close();
+            }
+            $assessRow['status'] = 'abandoned';
+        }
+
         if ($assessRow['status'] !== 'in_progress') {
             $response['success'] = false;
-            $response['message'] = 'Assessment is not in progress';
+            $response['message'] = 'Assessment is not in progress or has expired.';
             $response['invalid_assessment'] = true;
             return;
         }
@@ -414,7 +445,7 @@ function handleCompleteAssessment($mysqli, &$response) {
                 'Assessment Submitted',
                 'Assessment Submitted — Your responses have been recorded.',
                 'success',
-                'assessment_history.php'
+                'assessment_results.php'
             );
             maybeNotifyWeeklyAssessmentSummary();
 
@@ -466,7 +497,7 @@ function handleGetResults($mysqli, &$response) {
                AVG(sa2.score) as avg_score
         FROM student_assessments sa
         LEFT JOIN student_answers sa2 ON sa.id = sa2.assessment_id
-        WHERE sa.id = ?
+        WHERE sa.id = ? AND sa.verification_status = 'verified'
         GROUP BY sa.id
     ");
     $stmt->bind_param('i', $assessmentId);
@@ -561,6 +592,14 @@ function handleGetHistory($mysqli, &$response) {
     $stmt->execute();
     $history = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
+    
+    foreach ($history as &$h) {
+        if (($h['verification_status'] ?? 'pending') !== 'verified') {
+            $h['total_score'] = 0;
+            $h['avg_score'] = 0;
+        }
+    }
+    unset($h);
     
     $response['success'] = true;
     $response['history'] = $history;

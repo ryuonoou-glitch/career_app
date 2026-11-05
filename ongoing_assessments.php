@@ -12,6 +12,22 @@ require_once 'system_config.php';
 require_once __DIR__ . '/includes/auth_rbac.php';
 require_permission('view_assessment_results');
 
+// Auto-expire abandoned assessments (24 hours timeout) to wipe them from the admin view in real-time
+$expireStmt = $mysqli->prepare("
+    UPDATE student_assessments 
+    SET status = 'abandoned' 
+    WHERE status = 'in_progress' 
+      AND (
+          (expires_at IS NOT NULL AND expires_at < NOW())
+          OR 
+          (expires_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR))
+      )
+");
+if ($expireStmt) {
+    $expireStmt->execute();
+    $expireStmt->close();
+}
+
 // ==================== AJAX HANDLERS ====================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     header('Content-Type: application/json');
@@ -36,9 +52,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         ];
         $order_by = $sort_map[$sort] ?? 'sa.created_at DESC';
 
-        // Build WHERE clauses for active in_progress assessments
-        $where_parts   = ["sa.status = 'in_progress'"];
-        $where_parts[] = "sa.id IN (SELECT MAX(id) FROM student_assessments WHERE status = 'in_progress' GROUP BY student_id)";
+        $filter_status = $_POST['status'] ?? 'in_progress';
+
+        // Build WHERE clauses for assessments
+        $where_parts = [];
+        if ($filter_status === 'in_progress') {
+            $where_parts[] = "sa.status = 'in_progress'";
+            $where_parts[] = "sa.id IN (SELECT MAX(id) FROM student_assessments WHERE status = 'in_progress' GROUP BY student_id)";
+        } else if ($filter_status === 'completed') {
+            $where_parts[] = "sa.status = 'completed'";
+            $where_parts[] = "sa.completed_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)";
+            $where_parts[] = "sa.id IN (SELECT MAX(id) FROM student_assessments WHERE status = 'completed' GROUP BY student_id)";
+        } else {
+            $where_parts[] = "sa.id IN (SELECT MAX(id) FROM student_assessments GROUP BY student_id)";
+        }
         $params        = [];
         $types         = '';
 
@@ -116,6 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             SELECT sa.id AS assessment_id, 
                    sa.student_id,
                    sa.created_at,
+                   sa.status AS assessment_status,
                    CONCAT(
                        COALESCE(s.first_name, ''),
                        IF(s.middle_name IS NOT NULL AND s.middle_name != '', CONCAT(' ', UPPER(SUBSTRING(s.middle_name, 1, 1)), '.'), ''),
@@ -157,8 +185,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
         $data_stmt->close();
 
+        $db_time_result = $mysqli->query("SELECT CURRENT_TIMESTAMP as server_time");
+        $server_time = $db_time_result->fetch_assoc()['server_time'];
+
         $response = [
             'success'     => true,
+            'server_time' => $server_time,
             'assessments' => $assessments,
             'total'       => $total_rows,
             'total_pages' => $total_pages,
@@ -498,7 +530,8 @@ while ($s = $strands_result->fetch_assoc()) {
             letter-spacing: 0.05em;
             color: #94a3b8;
             margin-bottom: 2px;
-            white-space: nowrap;
+            white-space: normal;
+            word-wrap: break-word;
         }
 
         .oa-kpi-val {
@@ -509,13 +542,16 @@ while ($s = $strands_result->fetch_assoc()) {
             margin: 0;
             font-feature-settings: "tnum";
             font-variant-numeric: tabular-nums;
+            white-space: normal;
+            word-wrap: break-word;
         }
 
         .oa-kpi-meta {
             font-size: 0.72rem;
             color: #64748b;
             margin-top: 2px;
-            white-space: nowrap;
+            white-space: normal;
+            word-wrap: break-word;
         }
 
         /* -- Multi-Filter & Search Toolbar -- */
@@ -1662,7 +1698,7 @@ while ($s = $strands_result->fetch_assoc()) {
                     <!-- Search Input Box -->
                     <div class="oa-search-wrapper">
                         <i class="fa-solid fa-magnifying-glass oa-search-icon"></i>
-                        <input type="text" id="oaSearchInput" class="oa-search-input" placeholder="Search by student name, LRN, or email..." autocomplete="off">
+                        <input type="text" id="oaSearchInput" class="oa-search-input" placeholder="Search by student name, Student ID, or email..." autocomplete="off">
                         <button type="button" class="oa-search-clear-btn" id="oaSearchClearBtn" title="Clear search query">
                             <i class="fa-solid fa-xmark"></i>
                         </button>
@@ -1670,6 +1706,16 @@ while ($s = $strands_result->fetch_assoc()) {
 
                     <!-- Filters Group -->
                     <div class="oa-filters-group">
+                        <!-- Status Filter -->
+                        <div class="oa-filter-select-box">
+                            <select id="oaStatusSelect" class="oa-filter-select">
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                                <option value="all">All</option>
+                            </select>
+                            <i class="fa-solid fa-chevron-down"></i>
+                        </div>
+
                         <!-- Strand Filter -->
                         <div class="oa-filter-select-box">
                             <select id="oaStrandSelect" class="oa-filter-select">
@@ -1858,10 +1904,11 @@ while ($s = $strands_result->fetch_assoc()) {
 
 document.addEventListener('DOMContentLoaded', function () {
 
-    const TOTAL_STANDARD_QUESTIONS = 120; // 30 per category x 4
+    const TOTAL_STANDARD_QUESTIONS = 80; // 20 per category x 4
 
     let state = {
         search: '',
+        status: 'in_progress',
         strand_id: 0,
         sort: 'recently_started',
         page: 1,
@@ -1870,12 +1917,14 @@ document.addEventListener('DOMContentLoaded', function () {
         isLoading: false,
         timerId: null,
         tickerId: null,
-        currentAssessments: []
+        currentAssessments: [],
+        serverTime: null
     };
 
     // DOM Elements
     const searchInput = document.getElementById('oaSearchInput');
     const searchClearBtn = document.getElementById('oaSearchClearBtn');
+    const statusSelect = document.getElementById('oaStatusSelect');
     const strandSelect = document.getElementById('oaStrandSelect');
     const sortSelect = document.getElementById('oaSortSelect');
     const resetFiltersBtn = document.getElementById('oaResetFiltersBtn');
@@ -1925,7 +1974,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // -- Helper: Relative Elapsed Time --
     function formatTimeAgo(dateStr) {
         if (!dateStr) return 'Just now';
-        const now = new Date();
+        const now = state.serverTime ? new Date(state.serverTime.replace(/-/g, '/')) : new Date();
         const date = new Date(dateStr.replace(/-/g, '/'));
         const diffSec = Math.max(0, Math.floor((now - date) / 1000));
         
@@ -1966,6 +2015,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const fd = new FormData();
             fd.append('action', 'get_ongoing');
             fd.append('search', state.search);
+            fd.append('status', state.status);
             fd.append('strand_id', state.strand_id);
             fd.append('sort', state.sort);
             fd.append('page', state.page);
@@ -1974,6 +2024,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const data = await res.json();
 
             if (data.success) {
+                state.serverTime = data.server_time || null;
                 state.currentAssessments = data.assessments || [];
                 renderKPIs(data.kpis);
                 renderTable(data.assessments, data.total, data.page, data.total_pages);
@@ -2046,9 +2097,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 <tr data-id="${a.assessment_id}">
                     <td>
                         <div class="oa-student-cell">
-                            <div class="oa-student-avatar">
-                                ${avatarHtml}
-                            </div>
                             <div class="oa-student-details">
                                 <span class="oa-student-name">${esc(a.student_name)}</span>
                             </div>
@@ -2084,10 +2132,17 @@ document.addEventListener('DOMContentLoaded', function () {
                         </div>
                     </td>
                     <td>
-                        <span class="oa-status-badge">
-                            <span class="oa-status-dot"></span>
-                            <span>In Progress</span>
-                        </span>
+                        ${a.assessment_status === 'completed' ? `
+                            <span class="oa-status-badge" style="background: rgba(39, 174, 96, 0.1); color: #2ecc71; border-color: rgba(46, 204, 113, 0.3);">
+                                <i class="fa-solid fa-check-circle"></i>
+                                <span>Completed</span>
+                            </span>
+                        ` : `
+                            <span class="oa-status-badge">
+                                <span class="oa-status-dot"></span>
+                                <span>In Progress</span>
+                            </span>
+                        `}
                     </td>
                     <td style="text-align: center;">
                         <div class="oa-actions-cluster">
@@ -2274,6 +2329,13 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 
+    // Filter Listeners
+    statusSelect.addEventListener('change', function () {
+        state.status = this.value;
+        state.page = 1;
+        fetchOngoingData(true);
+    });
+
     // Strand Filter Dropdown
     strandSelect.addEventListener('change', function () {
         state.strand_id = parseInt(this.value, 10);
@@ -2298,9 +2360,13 @@ document.addEventListener('DOMContentLoaded', function () {
         sortSelect.value = 'recently_started';
 
         state.search = '';
+        state.status = 'in_progress';
         state.strand_id = 0;
         state.sort = 'recently_started';
         state.page = 1;
+
+        statusSelect.value = 'in_progress';
+        strandSelect.value = '0';
 
         fetchOngoingData(true);
         setupRefreshTimers();

@@ -34,7 +34,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         case 'add_course':
             $courseName = trim($_POST['course_name'] ?? '');
             $description = trim($_POST['description'] ?? '');
-            $clusterId = (int)($_POST['cluster_id'] ?? 0);
+            $clusterId = !empty($_POST['cluster_id']) ? (int)$_POST['cluster_id'] : null;
+            $strandId = !empty($_POST['strand_id']) ? (int)$_POST['strand_id'] : null;
             $possibleCareers = trim($_POST['possible_careers'] ?? '');
             $selectedJobIds = array_map('intval', (array)($_POST['job_ids'] ?? []));
             
@@ -44,71 +45,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 exit;
             }
             
-            $stmt = $mysqli->prepare("
-                INSERT INTO courses (course_name, description, cluster_id, possible_careers, created_at)
-                VALUES (?, ?, ?, ?, NOW())
-            ");
-            $stmt->bind_param('ssis', $courseName, $description, $clusterId, $possibleCareers);
-            
-            if ($stmt->execute()) {
-                $newCourseId = $mysqli->insert_id;
-                // Sync course_jobs
-                if (!empty($selectedJobIds)) {
-                    $insJob = $mysqli->prepare("INSERT IGNORE INTO course_jobs (course_id, job_id) VALUES (?, ?)");
-                    foreach ($selectedJobIds as $jid) {
-                        if ($jid > 0) { 
-                            $insJob->bind_param('ii', $newCourseId, $jid); 
-                            $insJob->execute(); 
-                            
-                            // Fetch job title
-                            $jTitle = '';
-                            $jQ = $mysqli->query("SELECT job_title FROM jobs WHERE id = {$jid}");
-                            if ($jQ && ($jR = $jQ->fetch_assoc())) { $jTitle = $jR['job_title']; }
-                            log_activity($userId, $userType, 'Link Job to Course', 'course_jobs', null, "Admin linked job {$jTitle} to {$courseName}", null, json_encode(['course_name' => $courseName, 'job_title' => $jTitle, 'job_id' => $jid]));
+            try {
+                $stmt = $mysqli->prepare("
+                    INSERT INTO courses (course_name, description, cluster_id, strand_id, possible_careers, created_at)
+                    VALUES (?, ?, ?, ?, ?, NOW())
+                ");
+                $stmt->bind_param('ssiis', $courseName, $description, $clusterId, $strandId, $possibleCareers);
+                
+                if ($stmt->execute()) {
+                    $newCourseId = $mysqli->insert_id;
+                    // Sync course_jobs
+                    if (!empty($selectedJobIds)) {
+                        $insJob = $mysqli->prepare("INSERT IGNORE INTO course_jobs (course_id, job_id) VALUES (?, ?)");
+                        foreach ($selectedJobIds as $jid) {
+                            if ($jid > 0) { 
+                                $insJob->bind_param('ii', $newCourseId, $jid); 
+                                $insJob->execute(); 
+                                
+                                // Fetch job title
+                                $jTitle = '';
+                                $jQ = $mysqli->query("SELECT job_title FROM jobs WHERE id = {$jid}");
+                                if ($jQ && ($jR = $jQ->fetch_assoc())) { $jTitle = $jR['job_title']; }
+                                log_activity($userId, $userType, 'Link Job to Course', 'course_jobs', null, "Admin linked job {$jTitle} to {$courseName}", null, json_encode(['course_name' => $courseName, 'job_title' => $jTitle, 'job_id' => $jid]));
+                            }
+                        }
+                        $insJob->close();
+                    }
+
+                    // Sync course_schools
+                    $selectedSchoolIds = array_map('intval', (array)($_POST['school_ids'] ?? []));
+                    if (!empty($selectedSchoolIds)) {
+                        $insSchool = $mysqli->prepare("INSERT IGNORE INTO course_schools (course_id, school_id, is_specialization, notes) VALUES (?, ?, ?, '')");
+                        foreach ($selectedSchoolIds as $sid) {
+                            if ($sid > 0) {
+                                $isSpec = isset($_POST['is_specialization_' . $sid]) ? 1 : 0;
+                                $insSchool->bind_param('iii', $newCourseId, $sid, $isSpec);
+                                $insSchool->execute();
+                                
+                                // Fetch school name
+                                $sName = '';
+                                $sQ = $mysqli->query("SELECT name FROM schools WHERE id = {$sid}");
+                                if ($sQ && ($sR = $sQ->fetch_assoc())) { $sName = $sR['name']; }
+                                $linkAction = $isSpec ? "marked {$sName} as specialization for" : "linked {$sName} to";
+                                log_activity($userId, $userType, 'Link School to Course', 'course_schools', null, "Admin {$linkAction} {$courseName}", null, json_encode(['course_name' => $courseName, 'school_name' => $sName, 'school_id' => $sid, 'is_specialization' => $isSpec]));
+                            }
+                        }
+                        $insSchool->close();
+                    }
+                    
+                    $clusterName = 'General';
+                    if (!empty($clusterId)) {
+                        $cQ = $mysqli->query("SELECT name FROM clusters WHERE id = {$clusterId}");
+                        if ($cQ && ($cR = $cQ->fetch_assoc())) {
+                            $clusterName = $cR['name'];
                         }
                     }
-                    $insJob->close();
-                }
+                    
+                    $descriptionText = "Admin added {$courseName} under {$clusterName} cluster";
+                    log_activity($userId, $userType, 'Added Course', 'courses', $newCourseId, $descriptionText, null, json_encode(['course_name' => $courseName, 'description' => $description, 'cluster_id' => $clusterId]));
 
-                // Sync course_schools
-                $selectedSchoolIds = array_map('intval', (array)($_POST['school_ids'] ?? []));
-                if (!empty($selectedSchoolIds)) {
-                    $insSchool = $mysqli->prepare("INSERT IGNORE INTO course_schools (course_id, school_id, is_specialization, notes) VALUES (?, ?, ?, '')");
-                    foreach ($selectedSchoolIds as $sid) {
-                        if ($sid > 0) {
-                            $isSpec = isset($_POST['is_specialization_' . $sid]) ? 1 : 0;
-                            $insSchool->bind_param('iii', $newCourseId, $sid, $isSpec);
-                            $insSchool->execute();
-                            
-                            // Fetch school name
-                            $sName = '';
-                            $sQ = $mysqli->query("SELECT name FROM schools WHERE id = {$sid}");
-                            if ($sQ && ($sR = $sQ->fetch_assoc())) { $sName = $sR['name']; }
-                            $linkAction = $isSpec ? "marked {$sName} as specialization for" : "linked {$sName} to";
-                            log_activity($userId, $userType, 'Link School to Course', 'course_schools', null, "Admin {$linkAction} {$courseName}", null, json_encode(['course_name' => $courseName, 'school_name' => $sName, 'school_id' => $sid, 'is_specialization' => $isSpec]));
-                        }
-                    }
-                    $insSchool->close();
+                    $response['success'] = true;
+                    $response['message'] = 'Course added successfully';
+                    $response['id'] = $newCourseId;
+                } else {
+                    $response['message'] = 'Failed to add course: ' . $stmt->error;
                 }
-                
-                $clusterName = 'Unknown';
-                if ($clusterId > 0) {
-                    $cQ = $mysqli->query("SELECT name FROM clusters WHERE id = {$clusterId}");
-                    if ($cQ && ($cR = $cQ->fetch_assoc())) {
-                        $clusterName = $cR['name'];
-                    }
-                }
-                
-                $descriptionText = "Admin added {$courseName} under {$clusterName} cluster";
-                log_activity($userId, $userType, 'Added Course', 'courses', $newCourseId, $descriptionText, null, json_encode(['course_name' => $courseName, 'description' => $description, 'cluster_id' => $clusterId]));
-
-                $response['success'] = true;
-                $response['message'] = 'Course added successfully';
-                $response['id'] = $newCourseId;
-            } else {
-                $response['message'] = 'Failed to add course: ' . $stmt->error;
+                $stmt->close();
+            } catch (Throwable $e) {
+                $response['message'] = 'Failed to add course: ' . $e->getMessage();
             }
-            $stmt->close();
             echo json_encode($response);
             exit;
             
@@ -209,7 +214,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $courseId = (int)($_POST['id'] ?? 0);
             $courseName = trim($_POST['course_name'] ?? '');
             $description = trim($_POST['description'] ?? '');
-            $clusterId = (int)($_POST['cluster_id'] ?? 0);
+            $clusterId = !empty($_POST['cluster_id']) ? (int)$_POST['cluster_id'] : null;
+            $strandId = !empty($_POST['strand_id']) ? (int)$_POST['strand_id'] : null;
             $possibleCareers = trim($_POST['possible_careers'] ?? '');
             $selectedJobIds = array_map('intval', (array)($_POST['job_ids'] ?? []));
             
@@ -255,26 +261,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $schQuery->close();
             }
 
-            $stmt = $mysqli->prepare("
-                UPDATE courses SET course_name = ?, description = ?, cluster_id = ?, 
-                possible_careers = ?
-                WHERE id = ?
-            ");
-            $stmt->bind_param('ssisi', $courseName, $description, $clusterId, $possibleCareers, $courseId);
-            
-            if ($stmt->execute()) {
-                // Sync course_jobs: delete all then re-insert selected
-                $delJobs = $mysqli->prepare("DELETE FROM course_jobs WHERE course_id = ?");
-                $delJobs->bind_param('i', $courseId);
-                $delJobs->execute();
-                $delJobs->close();
-                if (!empty($selectedJobIds)) {
-                    $insJob = $mysqli->prepare("INSERT IGNORE INTO course_jobs (course_id, job_id) VALUES (?, ?)");
-                    foreach ($selectedJobIds as $jid) {
-                        if ($jid > 0) { $insJob->bind_param('ii', $courseId, $jid); $insJob->execute(); }
+            try {
+                $stmt = $mysqli->prepare("
+                    UPDATE courses SET course_name = ?, description = ?, cluster_id = ?, strand_id = ?, 
+                    possible_careers = ?
+                    WHERE id = ?
+                ");
+                $stmt->bind_param('ssiisi', $courseName, $description, $clusterId, $strandId, $possibleCareers, $courseId);
+                
+                if ($stmt->execute()) {
+                    // Sync course_jobs: delete all then re-insert selected
+                    $delJobs = $mysqli->prepare("DELETE FROM course_jobs WHERE course_id = ?");
+                    $delJobs->bind_param('i', $courseId);
+                    $delJobs->execute();
+                    $delJobs->close();
+                    if (!empty($selectedJobIds)) {
+                        $insJob = $mysqli->prepare("INSERT IGNORE INTO course_jobs (course_id, job_id) VALUES (?, ?)");
+                        foreach ($selectedJobIds as $jid) {
+                            if ($jid > 0) { $insJob->bind_param('ii', $courseId, $jid); $insJob->execute(); }
+                        }
+                        $insJob->close();
                     }
-                    $insJob->close();
-                }
 
                 // Sync course_schools: delete all then re-insert selected
                 $selectedSchoolIds = array_map('intval', (array)($_POST['school_ids'] ?? []));
@@ -371,9 +378,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $response['success'] = true;
                 $response['message'] = 'Course updated successfully';
             } else {
-                $response['message'] = 'Failed to update course';
+                $response['message'] = 'Failed to update course: ' . $stmt->error;
             }
             $stmt->close();
+            } catch (Throwable $e) {
+                $response['message'] = 'Failed to update course: ' . $e->getMessage();
+            }
             echo json_encode($response);
             exit;
 
@@ -455,23 +465,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $stmt->close();
             echo json_encode($response); exit;
 
+        case 'check_course_associations':
+            $courseId = (int)($_POST['id'] ?? 0);
+            $checkSchools = $mysqli->prepare("SELECT COUNT(*) as count FROM course_schools WHERE course_id = ?");
+            $checkSchools->bind_param('i', $courseId);
+            $checkSchools->execute();
+            $schoolCount = (int)($checkSchools->get_result()->fetch_assoc()['count'] ?? 0);
+            $checkSchools->close();
+
+            $checkJobs = $mysqli->prepare("SELECT COUNT(*) as count FROM course_jobs WHERE course_id = ?");
+            $checkJobs->bind_param('i', $courseId);
+            $checkJobs->execute();
+            $jobCount = (int)($checkJobs->get_result()->fetch_assoc()['count'] ?? 0);
+            $checkJobs->close();
+
+            $totalAssociations = $schoolCount + $jobCount;
+            echo json_encode([
+                'success' => true,
+                'count' => $totalAssociations,
+                'school_count' => $schoolCount,
+                'job_count' => $jobCount
+            ]);
+            exit;
+
         case 'delete_course':
             $courseId = (int)($_POST['id'] ?? 0);
+            $unlinkAssociations = !empty($_POST['unlink_associations']) || !empty($_POST['unlink_courses']);
             if ($courseId <= 0) {
                 $response['message'] = 'Invalid course ID';
                 echo json_encode($response);
                 exit;
             }
             
-            // Check if course is associated with any schools
-            $check = $mysqli->prepare("SELECT COUNT(*) as count FROM course_schools WHERE course_id = ?");
-            $check->bind_param('i', $courseId);
-            $check->execute();
-            $count = $check->get_result()->fetch_assoc()['count'];
-            $check->close();
-            
-            if ($count > 0) {
-                $response['message'] = 'Cannot delete course: It is associated with schools';
+            // Check if course is associated with any schools or jobs
+            $checkS = $mysqli->prepare("SELECT COUNT(*) as count FROM course_schools WHERE course_id = ?");
+            $checkS->bind_param('i', $courseId);
+            $checkS->execute();
+            $schoolCount = (int)($checkS->get_result()->fetch_assoc()['count'] ?? 0);
+            $checkS->close();
+
+            $checkJ = $mysqli->prepare("SELECT COUNT(*) as count FROM course_jobs WHERE course_id = ?");
+            $checkJ->bind_param('i', $courseId);
+            $checkJ->execute();
+            $jobCount = (int)($checkJ->get_result()->fetch_assoc()['count'] ?? 0);
+            $checkJ->close();
+
+            $totalAssociations = $schoolCount + $jobCount;
+            if ($totalAssociations > 0 && !$unlinkAssociations) {
+                $response['has_associations'] = true;
+                $response['count'] = $totalAssociations;
+                $response['message'] = 'This course is currently associated with one or more schools or careers. Please confirm unlinking.';
                 echo json_encode($response);
                 exit;
             }
@@ -486,20 +529,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $cQuery->close();
             }
 
-            $stmt = $mysqli->prepare("DELETE FROM courses WHERE id = ?");
-            $stmt->bind_param('i', $courseId);
-            
-            if ($stmt->execute()) {
+            // Database transaction: unlink course_schools, course_jobs, course_competencies, then delete course
+            $mysqli->begin_transaction();
+            try {
+                if ($schoolCount > 0) {
+                    $delCS = $mysqli->prepare("DELETE FROM course_schools WHERE course_id = ?");
+                    $delCS->bind_param('i', $courseId);
+                    if (!$delCS->execute()) {
+                        throw new Exception('Failed to remove school associations: ' . $delCS->error);
+                    }
+                    $delCS->close();
+                }
+
+                if ($jobCount > 0) {
+                    $delCJ = $mysqli->prepare("DELETE FROM course_jobs WHERE course_id = ?");
+                    $delCJ->bind_param('i', $courseId);
+                    if (!$delCJ->execute()) {
+                        throw new Exception('Failed to remove career associations: ' . $delCJ->error);
+                    }
+                    $delCJ->close();
+                }
+
+                $delCC = $mysqli->prepare("DELETE FROM course_competencies WHERE course_id = ?");
+                $delCC->bind_param('i', $courseId);
+                $delCC->execute();
+                $delCC->close();
+
+                $stmt = $mysqli->prepare("DELETE FROM courses WHERE id = ?");
+                $stmt->bind_param('i', $courseId);
+                if (!$stmt->execute()) {
+                    throw new Exception('Failed to delete course: ' . $stmt->error);
+                }
+                $stmt->close();
+
+                $mysqli->commit();
+
                 $cName = $oldCourse['course_name'] ?? 'Unknown Course';
-                $descriptionText = "Admin removed {$cName} from the system";
+                $descriptionText = "Admin removed {$cName} from the system" . ($totalAssociations > 0 ? " (unlinked {$totalAssociations} association(s))" : "");
                 log_activity($userId, $userType, 'Deleted Course', 'courses', $courseId, $descriptionText, json_encode($oldCourse), null);
 
                 $response['success'] = true;
                 $response['message'] = 'Course deleted successfully';
-            } else {
-                $response['message'] = 'Failed to delete course';
+            } catch (Exception $ex) {
+                $mysqli->rollback();
+                $response['success'] = false;
+                $response['message'] = $ex->getMessage();
             }
-            $stmt->close();
             echo json_encode($response);
             exit;
     }
@@ -508,7 +583,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 // Get courses with related data
 $courses = [];
 $result = $mysqli->query("
-    SELECT c.*, s.name as strand_name, s.code as strand_code, cl.name as cluster_name
+    SELECT c.*, s.name as strand_name, s.code as strand_code, cl.name as cluster_name,
+    (SELECT COUNT(*) FROM course_schools WHERE course_id = c.id) as school_count,
+    (SELECT COUNT(*) FROM course_jobs WHERE course_id = c.id) as job_count
     FROM courses c
     LEFT JOIN strands s ON c.strand_id = s.id
     LEFT JOIN clusters cl ON c.cluster_id = cl.id
@@ -521,7 +598,7 @@ if ($result) {
 }
 
 // Get dropdown data
-$strands  = $mysqli->query("SELECT id, name, code FROM strands WHERE code IN ('ACADPRO', 'STEM') ORDER BY name")->fetch_all(MYSQLI_ASSOC) ?? [];
+$strands  = $mysqli->query("SELECT id, name, code FROM strands ORDER BY name")->fetch_all(MYSQLI_ASSOC) ?? [];
 $clusters = $mysqli->query("SELECT id, name FROM clusters ORDER BY name")->fetch_all(MYSQLI_ASSOC) ?? [];
 $allJobs  = $mysqli->query("SELECT id, job_title FROM jobs ORDER BY job_title")->fetch_all(MYSQLI_ASSOC) ?? [];
 $allSchools = $mysqli->query("SELECT id, name, city, province, region FROM schools ORDER BY name")->fetch_all(MYSQLI_ASSOC) ?? [];
@@ -539,7 +616,7 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="admin.css">
+    <link rel="stylesheet" href="admin.css?v=<?php echo filemtime('admin.css'); ?>">
     <style>
         /* -- Jobs multi-select inside course modal -- */
         .jobs-multiselect {
@@ -2094,6 +2171,61 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
             color: #475569;
             font-size: 1rem;
         }
+
+        /* Search bar and clear button alignment */
+        .search-filter {
+            display: flex !important;
+            align-items: center !important;
+            gap: 0.5rem !important;
+            flex: 0 1 auto !important;
+            min-width: 0 !important;
+        }
+        .search-box-wrapper {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 0.45rem !important;
+            flex: 0 1 auto !important;
+            min-width: fit-content !important;
+            max-width: none !important;
+        }
+        .search-box-wrapper .search-box {
+            position: relative !important;
+            width: 280px !important;
+            min-width: 220px !important;
+            max-width: 360px !important;
+            flex: 1 1 auto !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+        .search-box-wrapper .search-box input {
+            width: 100% !important;
+            height: 38px !important;
+            box-sizing: border-box !important;
+            padding: 0.5rem 0.75rem 0.5rem 2.25rem !important;
+        }
+        .search-box-wrapper .btn-search {
+            height: 38px !important;
+            box-sizing: border-box !important;
+            padding: 0 1rem !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 0.35rem !important;
+            margin: 0 !important;
+            flex-shrink: 0 !important;
+            white-space: nowrap !important;
+        }
+        .search-filter .btn-clear {
+            height: 38px !important;
+            box-sizing: border-box !important;
+            padding: 0 0.85rem !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 0.35rem !important;
+            margin: 0 !important;
+            flex-shrink: 0 !important;
+            white-space: nowrap !important;
+            align-self: center !important;
+        }
     </style>
 </head>
 <body>
@@ -2373,7 +2505,7 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
                                                 <button class="btn-action edit" data-id="<?php echo $course['id']; ?>" title="Edit">
                                                     <i class="fa-solid fa-pen"></i>
                                                 </button>
-                                                <button class="btn-action delete" data-id="<?php echo $course['id']; ?>" title="Delete">
+                                                <button class="btn-action delete" data-id="<?php echo $course['id']; ?>" data-total-associations="<?php echo (int)(($course['school_count'] ?? 0) + ($course['job_count'] ?? 0)); ?>" title="Delete">
                                                     <i class="fa-solid fa-trash"></i>
                                                 </button>
                                             </div>
@@ -2419,13 +2551,13 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
                             </div>
                         </div>
                     </div>
-                    <div class="cluster-desc-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+                    <div class="cluster-desc-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
                         <div class="form-group">
-                            <label for="cluster" style="font-weight:600; margin-bottom:0.4rem; display:block;">Career Cluster <span class="required">*</span></label>
+                            <label for="cluster" style="font-weight:600; margin-bottom:0.4rem; display:block;">Career Cluster</label>
                             <div class="input-with-icon">
                                 <i class="fa-solid fa-border-all"></i>
                                 <select id="cluster" name="cluster_id">
-                                    <option value="">Select cluster</option>
+                                    <option value="">Select cluster (optional)</option>
                                     <?php foreach ($clusters as $cluster): ?>
                                     <option value="<?php echo $cluster['id']; ?>"><?php echo htmlspecialchars($cluster['name']); ?></option>
                                     <?php endforeach; ?>
@@ -2433,6 +2565,20 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
                             </div>
                         </div>
                         <div class="form-group">
+                            <label for="strand" style="font-weight:600; margin-bottom:0.4rem; display:block;">SHS Strand (Optional)</label>
+                            <div class="input-with-icon">
+                                <i class="fa-solid fa-book-open"></i>
+                                <select id="strand" name="strand_id">
+                                    <option value="">Select strand (optional)</option>
+                                    <?php foreach ($strands as $st): ?>
+                                    <option value="<?php echo $st['id']; ?>"><?php echo htmlspecialchars($st['name'] . ' (' . $st['code'] . ')'); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-row" style="margin-bottom: 1.25rem;">
+                        <div class="form-group full-width">
                             <label for="description" style="font-weight:600; margin-bottom:0.4rem; display:block;">Description <span class="required">*</span></label>
                             <div class="input-with-icon textarea-icon">
                                 <i class="fa-solid fa-file-lines"></i>
@@ -2562,13 +2708,13 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
                             </div>
                         </div>
                     </div>
-                    <div class="cluster-desc-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+                    <div class="cluster-desc-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem;">
                         <div class="form-group">
-                            <label for="editCluster" style="font-weight:600; margin-bottom:0.4rem; display:block;">Career Cluster <span class="required">*</span></label>
+                            <label for="editCluster" style="font-weight:600; margin-bottom:0.4rem; display:block;">Career Cluster</label>
                             <div class="input-with-icon">
                                 <i class="fa-solid fa-border-all"></i>
                                 <select id="editCluster" name="cluster_id">
-                                    <option value="">Select cluster</option>
+                                    <option value="">Select cluster (optional)</option>
                                     <?php foreach ($clusters as $cluster): ?>
                                     <option value="<?php echo $cluster['id']; ?>"><?php echo htmlspecialchars($cluster['name']); ?></option>
                                     <?php endforeach; ?>
@@ -2576,6 +2722,20 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
                             </div>
                         </div>
                         <div class="form-group">
+                            <label for="editStrand" style="font-weight:600; margin-bottom:0.4rem; display:block;">SHS Strand (Optional)</label>
+                            <div class="input-with-icon">
+                                <i class="fa-solid fa-book-open"></i>
+                                <select id="editStrand" name="strand_id">
+                                    <option value="">Select strand (optional)</option>
+                                    <?php foreach ($strands as $st): ?>
+                                    <option value="<?php echo $st['id']; ?>"><?php echo htmlspecialchars($st['name'] . ' (' . $st['code'] . ')'); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-row" style="margin-bottom: 1.25rem;">
+                        <div class="form-group full-width">
                             <label for="editDescription" style="font-weight:600; margin-bottom:0.4rem; display:block;">Description <span class="required">*</span></label>
                             <div class="input-with-icon textarea-icon">
                                 <i class="fa-solid fa-file-lines"></i>
@@ -2680,7 +2840,7 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h2><i class="fa-solid fa-exclamation-triangle"></i> Confirm Delete</h2>
+                <h2><i class="fa-solid fa-exclamation-triangle"></i> <span id="deleteModalTitleText">Confirm Delete</span></h2>
                 <button class="modal-close" id="closeDeleteModal">
                     <i class="fa-solid fa-xmark"></i>
                 </button>
@@ -2690,8 +2850,8 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
                     <div class="delete-icon">
                         <i class="fa-solid fa-trash-alt"></i>
                     </div>
-                    <p class="delete-message">Are you sure you want to delete this course?</p>
-                    <p class="delete-warning">This action cannot be undone.</p>
+                    <p class="delete-message" id="deleteCourseMessage">Are you sure you want to delete this course?</p>
+                    <p class="delete-warning" id="deleteCourseWarning">This action cannot be undone.</p>
                     <div class="delete-course-info">
                         <span class="course-name" id="deleteCourseName">Computer Science</span>
                         <span class="course-cluster" id="deleteCourseCluster">Information Technology</span>
@@ -3826,6 +3986,9 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
                             document.getElementById('editCourseId').value = course.id;
                             document.getElementById('editCourseName').value = course.course_name || '';
                             document.getElementById('editCluster').value = course.cluster_id || '';
+                            if (document.getElementById('editStrand')) {
+                                document.getElementById('editStrand').value = course.strand_id || '';
+                            }
                             document.getElementById('editDescription').value = course.description || '';
 
                             editSchoolsManager.clearSchools();
@@ -3872,12 +4035,49 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
 
             // Delete Button Handlers
             let deleteCourseId = null;
+            let unlinkCourseMode = false;
+
             document.querySelectorAll('.btn-action.delete').forEach(btn => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const row = btn.closest('tr');
                     const courseName = row.querySelector('.course-name').textContent.trim();
                     deleteCourseId = btn.dataset.id;
-                    document.getElementById('deleteCourseName').textContent = courseName;
+                    unlinkCourseMode = false;
+
+                    const titleEl = document.getElementById('deleteModalTitleText');
+                    const msgEl = document.getElementById('deleteCourseMessage');
+                    const nameEl = document.getElementById('deleteCourseName');
+                    const warningEl = document.getElementById('deleteCourseWarning');
+                    const confirmBtn = document.getElementById('confirmDelete');
+
+                    if (nameEl) nameEl.textContent = courseName;
+
+                    // Check associations
+                    let totalCount = parseInt(btn.getAttribute('data-total-associations') || '0', 10);
+                    try {
+                        const fd = new FormData();
+                        fd.append('action', 'check_course_associations');
+                        fd.append('id', deleteCourseId);
+                        const res = await apiPost(fd);
+                        if (res && res.success && typeof res.count !== 'undefined') {
+                            totalCount = res.count;
+                        }
+                    } catch (e) {}
+
+                    if (totalCount > 0) {
+                        unlinkCourseMode = true;
+                        if (titleEl) titleEl.textContent = 'Delete Course?';
+                        if (msgEl) msgEl.textContent = 'This course is currently associated with one or more schools or careers. Deleting this course will remove its associations. The schools and careers themselves will not be deleted.';
+                        if (warningEl) warningEl.textContent = `(${totalCount} association${totalCount > 1 ? 's' : ''} will be unlinked)`;
+                        if (confirmBtn) confirmBtn.textContent = 'Unlink & Delete';
+                    } else {
+                        unlinkCourseMode = false;
+                        if (titleEl) titleEl.textContent = 'Confirm Delete';
+                        if (msgEl) msgEl.textContent = 'Are you sure you want to delete this course?';
+                        if (warningEl) warningEl.textContent = 'This action cannot be undone.';
+                        if (confirmBtn) confirmBtn.textContent = 'Delete';
+                    }
+
                     deleteModal.classList.add('active');
                 });
             });
@@ -3927,6 +4127,9 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
                 const fd = new FormData();
                 fd.append('action', 'delete_course');
                 fd.append('id', deleteCourseId);
+                if (unlinkCourseMode) {
+                    fd.append('unlink_associations', '1');
+                }
                 
                 deleteModal.classList.remove('active');
                 try {
@@ -3943,7 +4146,14 @@ $bigFiveTraits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeablenes
 
             // Search Functionality
             const searchInput = document.getElementById('searchInput');
+            const searchBtn = document.getElementById('searchBtn');
             const clearBtn = document.getElementById('clearFilter');
+
+            if (searchBtn && searchInput) {
+                searchBtn.addEventListener('click', () => {
+                    searchInput.dispatchEvent(new Event('input'));
+                });
+            }
 
             searchInput.addEventListener('input', () => {
                 const searchTerm = searchInput.value.toLowerCase().trim();

@@ -53,8 +53,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $middleName = $middleName !== '' ? ucwords(strtolower($middleName)) : '';
                 $lastName   = $lastName   !== '' ? ucwords(strtolower($lastName))   : '';
 
-                if ($firstName === '' || $lastName === '' || $email === '' || $studentId === '' || $gender === '' || $strandCode === '' || $gradeLevel === '' || $address === '') {
+                if ($firstName === '' || $lastName === '' || $email === '' || $studentId === '' || $gender === '' || $strandCode === '' || $gradeLevel === '') {
                     throw new Exception('Please fill in all required fields.');
+                }
+                
+                if (!isValidEmailAddress($email)) {
+                    throw new Exception('Please enter a valid email address.');
                 }
 
                 $gradeLevelDb = ($gradeLevel === '11' || $gradeLevel === 'Grade 11') ? 'Grade 11' : 'Grade 12';
@@ -105,12 +109,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 // Get active school_year_id
                 $activeSchoolYearId = getCurrentSchoolYearId($mysqli);
 
+                // Fix Circular Foreign Key Constraint:
+                // We MUST insert into valid_student_ids FIRST to satisfy the FK constraint on the students table.
+                if (!$validRow) {
+                    $vsInsertTemp = $mysqli->prepare("INSERT INTO valid_student_ids (student_id, school_year_id, grade_level, strand_code, is_registered, registered_student_id, created_at) VALUES (?, ?, ?, ?, 1, 0, NOW())");
+                    if ($vsInsertTemp) {
+                        $vsInsertTemp->bind_param("siss", $studentId, $activeSchoolYearId, $gradeLevelDb, $strandCode);
+                        $vsInsertTemp->execute();
+                        $vsInsertTemp->close();
+                    }
+                }
+
                 $ins = $mysqli->prepare('INSERT INTO students (student_id, first_name, middle_name, last_name, suffix, gender, email, password, address, strand_id, school_year_id, grade_level, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
                 $ins->bind_param('sssssssssiiss', $studentId, $firstName, $middleName, $lastName, $suffix, $gender, $email, $hashedPassword, $address, $strandId, $activeSchoolYearId, $gradeLevelDb, $status);
 
                 if (!$ins->execute()) {
                     $err = $ins->error;
                     $ins->close();
+                    // Cleanup the temporary valid_student_ids row if the student insert fails
+                    if (!$validRow) {
+                        $mysqli->query("DELETE FROM valid_student_ids WHERE student_id = '$studentId'");
+                    }
                     throw new Exception('Failed to add student: ' . $err);
                 }
                 
@@ -139,23 +158,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     throw new Exception('Failed to capture real auto-generated student ID.');
                 }
 
-                // Sync valid_student_ids: never insert/update registered_student_id with 0
-                if ($validRow) {
-                    // School ID exists but is_registered = 0 -> UPDATE that row with activeSchoolYearId
-                    $vsUpdate = $mysqli->prepare("UPDATE valid_student_ids SET is_registered = 1, registered_student_id = ?, school_year_id = ? WHERE student_id = ?");
-                    if ($vsUpdate) {
-                        $vsUpdate->bind_param("iis", $newStudentId, $activeSchoolYearId, $studentId);
-                        $vsUpdate->execute();
-                        $vsUpdate->close();
-                    }
-                } else {
-                    // School ID does NOT exist yet -> INSERT new row with is_registered = 1 and registered_student_id = real new student ID
-                    $vsInsert = $mysqli->prepare("INSERT INTO valid_student_ids (student_id, school_year_id, grade_level, strand_code, is_registered, registered_student_id, created_at) VALUES (?, ?, ?, ?, 1, ?, NOW())");
-                    if ($vsInsert) {
-                        $vsInsert->bind_param("sissi", $studentId, $activeSchoolYearId, $gradeLevelDb, $strandCode, $newStudentId);
-                        $vsInsert->execute();
-                        $vsInsert->close();
-                    }
+                // Sync valid_student_ids: Now update the registered_student_id with the actual inserted ID
+                $vsUpdate = $mysqli->prepare("UPDATE valid_student_ids SET is_registered = 1, registered_student_id = ?, school_year_id = ? WHERE student_id = ?");
+                if ($vsUpdate) {
+                    $vsUpdate->bind_param("iis", $newStudentId, $activeSchoolYearId, $studentId);
+                    $vsUpdate->execute();
+                    $vsUpdate->close();
                 }
                 // Mark account as requiring a forced password change on first login
                 $mcpStmt = $mysqli->prepare("UPDATE students SET must_change_password = 1 WHERE id = ?");
@@ -248,6 +256,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
                 if ($firstName === '' || $lastName === '' || $email === '' || $studentId === '' || $gender === '' || $strandCode === '' || $gradeLevel === '') {
                     throw new Exception('Please fill in all required fields.');
+                }
+                
+                if (!isValidEmailAddress($email)) {
+                    throw new Exception('Please enter a valid email address.');
                 }
 
                 $gradeLevelDb = ($gradeLevel === '11' || $gradeLevel === 'Grade 11') ? 'Grade 11' : 'Grade 12';
@@ -604,97 +616,141 @@ $totalStudents = count($students);
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="admin.css">
     <style>
-        /* Strict Single-Row Layout for Toolbar */
+        /* Modern Structured Toolbar for Manage Students */
         .page-header {
-            margin-bottom: 1.5rem;
+            margin-bottom: 1.25rem;
             width: 100%;
         }
 
         .header-actions {
             display: flex !important;
-            flex-direction: row !important;
-            flex-wrap: nowrap !important;
-            align-items: center !important;
-            justify-content: space-between !important;
-            gap: 0.5rem !important;
+            flex-direction: column !important;
+            gap: 0.85rem !important;
             width: 100% !important;
-            overflow-x: auto !important;
-            overflow-y: hidden !important;
-            padding-bottom: 4px !important;
             box-sizing: border-box !important;
         }
 
-        .search-filter {
+        /* Top Row: Search on Left, Summary + CTA on Right */
+        .toolbar-top-row {
             display: flex !important;
-            flex-direction: row !important;
-            flex-wrap: nowrap !important;
             align-items: center !important;
-            gap: 0.45rem !important;
-            flex: 1 1 auto !important;
-            min-width: 0 !important;
+            justify-content: space-between !important;
+            gap: 1rem !important;
+            width: 100% !important;
+            flex-wrap: wrap !important;
+            box-sizing: border-box !important;
         }
 
         .search-box-wrapper {
             display: flex !important;
-            flex-direction: row !important;
             align-items: center !important;
-            gap: 0.35rem !important;
-            flex: 0 1 240px !important;
-            min-width: 150px !important;
+            gap: 0.5rem !important;
+            flex: 1 1 340px !important;
+            max-width: 440px !important;
+            min-width: 260px !important;
         }
 
         .search-box {
             position: relative !important;
             flex: 1 !important;
-            min-width: 90px !important;
-            max-width: 170px !important;
+            min-width: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+        }
+
+        .search-box i {
+            position: absolute !important;
+            left: 0.9rem !important;
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            color: #94a3b8 !important;
+            font-size: 0.9rem !important;
+            pointer-events: none !important;
+            z-index: 2 !important;
         }
 
         .search-box input {
             width: 100% !important;
-            height: 38px !important;
+            height: 40px !important;
             box-sizing: border-box !important;
-            padding: 0.45rem 0.5rem 0.45rem 2rem !important;
+            padding: 0.5rem 0.85rem 0.5rem 2.45rem !important;
             border: 1px solid rgba(251, 191, 36, 0.25) !important;
             border-radius: 8px !important;
-            background: rgba(30, 41, 59, 0.6) !important;
+            background: rgba(30, 41, 59, 0.7) !important;
             color: #e2e8f0 !important;
-            font-size: 0.82rem !important;
+            font-size: 0.85rem !important;
+            transition: all 0.2s ease !important;
+        }
+
+        .search-box input:focus {
+            outline: none !important;
+            border-color: #fbbf24 !important;
+            background: rgba(30, 41, 59, 0.9) !important;
+            box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.15) !important;
+        }
+
+        .search-box input::placeholder {
+            color: #64748b !important;
         }
 
         .search-box-wrapper .btn-search,
         .btn-search {
-            height: 38px !important;
-            padding: 0 0.75rem !important;
-            font-size: 0.82rem !important;
+            height: 40px !important;
+            padding: 0 1.15rem !important;
+            font-size: 0.85rem !important;
             font-weight: 600 !important;
             white-space: nowrap !important;
             flex-shrink: 0 !important;
             display: inline-flex !important;
             align-items: center !important;
-            gap: 0.35rem !important;
+            gap: 0.4rem !important;
             border-radius: 8px !important;
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+            color: #0f172a !important;
+            border: none !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease !important;
+            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25) !important;
+        }
+
+        .btn-search:hover {
+            transform: translateY(-1px) !important;
+            box-shadow: 0 4px 12px rgba(251, 191, 36, 0.35) !important;
+        }
+
+        .header-right-group {
+            display: flex !important;
+            align-items: center !important;
+            gap: 0.75rem !important;
+            margin-left: auto !important;
+            flex-shrink: 0 !important;
+            flex-wrap: wrap !important;
         }
 
         /* Highlighted Total Students Badge */
         .total-students-badge {
             display: inline-flex !important;
             align-items: center !important;
-            gap: 0.45rem !important;
-            height: 38px !important;
-            padding: 0 0.75rem !important;
+            gap: 0.55rem !important;
+            height: 40px !important;
+            padding: 0 0.95rem !important;
             box-sizing: border-box !important;
-            background: linear-gradient(135deg, rgba(251, 191, 36, 0.18) 0%, rgba(245, 158, 11, 0.08) 100%) !important;
-            border: 1px solid rgba(251, 191, 36, 0.45) !important;
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.14) 0%, rgba(245, 158, 11, 0.06) 100%) !important;
+            border: 1px solid rgba(251, 191, 36, 0.4) !important;
             border-radius: 8px !important;
-            box-shadow: 0 0 14px rgba(251, 191, 36, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+            box-shadow: 0 0 14px rgba(251, 191, 36, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
             white-space: nowrap !important;
             flex-shrink: 0 !important;
         }
 
+        .total-students-badge .badge-icon {
+            color: #fbbf24 !important;
+            font-size: 0.9rem !important;
+        }
+
         .total-badge-label {
             color: #e2e8f0 !important;
-            font-size: 0.82rem !important;
+            font-size: 0.84rem !important;
             font-weight: 600 !important;
             letter-spacing: 0.01em !important;
         }
@@ -704,57 +760,18 @@ $totalStudents = count($students);
             background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
             font-size: 0.85rem !important;
             font-weight: 800 !important;
-            padding: 0.12rem 0.5rem !important;
+            padding: 0.15rem 0.55rem !important;
             border-radius: 6px !important;
-            min-width: 18px !important;
+            min-width: 20px !important;
             text-align: center !important;
             box-shadow: 0 2px 6px rgba(245, 158, 11, 0.35) !important;
         }
 
-        .filter-dropdowns {
-            display: flex !important;
-            flex-direction: row !important;
-            gap: 0.35rem !important;
-            align-items: center !important;
-            flex-wrap: nowrap !important;
-            flex-shrink: 0 !important;
-        }
-
-        .filter-select {
-            height: 38px !important;
-            box-sizing: border-box !important;
-            padding: 0 1.4rem 0 0.6rem !important;
-            background: #1e293b !important;
-            border: 1px solid #334155 !important;
-            border-radius: 8px !important;
-            color: #e2e8f0 !important;
-            font-size: 0.8rem !important;
-            font-weight: 500 !important;
-            min-width: 90px !important;
-            max-width: 112px !important;
-            white-space: nowrap !important;
-            flex-shrink: 0 !important;
-        }
-
-        .btn-clear {
-            height: 38px !important;
-            box-sizing: border-box !important;
-            padding: 0 0.7rem !important;
-            border-radius: 8px !important;
-            font-size: 0.8rem !important;
-            font-weight: 500 !important;
-            white-space: nowrap !important;
-            flex-shrink: 0 !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            gap: 0.3rem !important;
-        }
-
-        .header-actions #addStudentBtn,
+        .header-right-group #addStudentBtn,
         .header-actions .btn-primary {
-            height: 38px !important;
+            height: 40px !important;
             box-sizing: border-box !important;
-            padding: 0 1rem !important;
+            padding: 0 1.25rem !important;
             border-radius: 8px !important;
             font-size: 0.85rem !important;
             font-weight: 600 !important;
@@ -762,8 +779,173 @@ $totalStudents = count($students);
             flex-shrink: 0 !important;
             display: inline-flex !important;
             align-items: center !important;
+            gap: 0.4rem !important;
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+            color: #0f172a !important;
+            border: none !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease !important;
+            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25) !important;
+            margin-left: 0 !important;
+        }
+
+        .header-right-group #addStudentBtn:hover,
+        .header-actions .btn-primary:hover {
+            transform: translateY(-1px) !important;
+            box-shadow: 0 4px 14px rgba(251, 191, 36, 0.4) !important;
+        }
+
+        /* Filter Bar Row */
+        .filter-bar-row {
+            display: flex !important;
+            align-items: center !important;
+            flex-wrap: wrap !important;
+            gap: 0.65rem !important;
+            width: 100% !important;
+            padding: 0.55rem 0.85rem !important;
+            background: rgba(18, 25, 43, 0.65) !important;
+            border: 1px solid rgba(148, 163, 184, 0.14) !important;
+            border-radius: 10px !important;
+            box-sizing: border-box !important;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+        }
+
+        .filter-group-header {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 0.4rem !important;
+            color: #94a3b8 !important;
+            font-size: 0.78rem !important;
+            font-weight: 700 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.05em !important;
+            margin-right: 0.25rem !important;
+            flex-shrink: 0 !important;
+        }
+
+        .filter-group-header i {
+            color: #fbbf24 !important;
+            font-size: 0.85rem !important;
+        }
+
+        .filter-dropdowns {
+            display: flex !important;
+            align-items: center !important;
+            flex-wrap: wrap !important;
+            gap: 0.5rem !important;
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+        }
+
+        .filter-select {
+            height: 36px !important;
+            box-sizing: border-box !important;
+            padding: 0 1.85rem 0 0.75rem !important;
+            background: #1e293b !important;
+            border: 1px solid #334155 !important;
+            border-radius: 8px !important;
+            color: #e2e8f0 !important;
+            font-size: 0.82rem !important;
+            font-weight: 500 !important;
+            white-space: nowrap !important;
+            flex-shrink: 0 !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease !important;
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E") !important;
+            background-repeat: no-repeat !important;
+            background-position: right 0.65rem center !important;
+        }
+
+        .filter-select:hover,
+        .filter-select:focus {
+            border-color: rgba(251, 191, 36, 0.5) !important;
+            box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.12) !important;
+            outline: none !important;
+        }
+
+        .filter-select option {
+            background: #1e293b !important;
+            color: #e2e8f0 !important;
+        }
+
+        #filterStatus {
+            min-width: 155px !important;
+        }
+
+        #filterAssessment {
+            min-width: 175px !important;
+        }
+
+        #filterGrade {
+            min-width: 115px !important;
+        }
+
+        #filterStrand {
+            min-width: 125px !important;
+        }
+
+        .btn-clear {
+            height: 36px !important;
+            box-sizing: border-box !important;
+            padding: 0 0.85rem !important;
+            background: rgba(30, 41, 59, 0.7) !important;
+            border: 1px solid rgba(251, 191, 36, 0.3) !important;
+            border-radius: 8px !important;
+            color: #cbd5e1 !important;
+            font-size: 0.8rem !important;
+            font-weight: 600 !important;
+            white-space: nowrap !important;
+            flex-shrink: 0 !important;
+            display: inline-flex !important;
+            align-items: center !important;
             gap: 0.35rem !important;
-            margin-left: auto !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease !important;
+        }
+
+        .btn-clear:hover {
+            border-color: #fbbf24 !important;
+            color: #fbbf24 !important;
+            background: rgba(251, 191, 36, 0.12) !important;
+        }
+
+        /* Responsive Breakpoints */
+        @media (max-width: 992px) {
+            .toolbar-top-row {
+                gap: 0.75rem !important;
+            }
+            .search-box-wrapper {
+                flex: 1 1 100% !important;
+                max-width: 100% !important;
+            }
+            .header-right-group {
+                width: 100% !important;
+                justify-content: space-between !important;
+                margin-left: 0 !important;
+            }
+        }
+
+        @media (max-width: 720px) {
+            .filter-bar-row {
+                flex-direction: column !important;
+                align-items: stretch !important;
+                padding: 0.75rem !important;
+            }
+            .filter-dropdowns {
+                flex-direction: column !important;
+                width: 100% !important;
+            }
+            .filter-select {
+                width: 100% !important;
+                min-width: 0 !important;
+                max-width: 100% !important;
+            }
+            .btn-clear {
+                width: 100% !important;
+                justify-content: center !important;
+            }
         }
         
         #addStudentModal .modal-content,
@@ -772,7 +954,7 @@ $totalStudents = count($students);
             z-index: 10;
             width: 100%;
             max-width: 860px;
-            max-height: 92vh;
+            max-height: 94vh;
             display: flex;
             flex-direction: column;
             background: #12192b;
@@ -788,7 +970,7 @@ $totalStudents = count($students);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 20px 28px 18px;
+            padding: 14px 24px 12px;
             border-bottom: 1px solid rgba(255,255,255,0.06);
             flex-shrink: 0;
         }
@@ -797,7 +979,7 @@ $totalStudents = count($students);
             display: flex;
             align-items: center;
             gap: 10px;
-            font-size: 1.15rem;
+            font-size: 1.1rem;
             font-weight: 700;
             color: #f1f5f9;
             margin: 0;
@@ -805,7 +987,7 @@ $totalStudents = count($students);
         #addStudentModal .modal-header h2 i,
         #editStudentModal .modal-header h2 i {
             color: #f59e0b;
-            font-size: 1.1rem;
+            font-size: 1.05rem;
         }
         #addStudentModal .modal-close,
         #editStudentModal .modal-close {
@@ -841,34 +1023,45 @@ $totalStudents = count($students);
         /* Body - scrollable */
         #addStudentModal .modal-body,
         #editStudentModal .modal-body {
-            padding: 24px 28px 16px;
+            padding: 8px 24px 10px;
             overflow-y: auto;
             flex: 1;
         }
 
-        /* Section heading row */
+        /* Section heading row - compact with sleek divider line filling horizontal space */
         .student-form .form-section-title {
             display: flex;
             align-items: center;
             gap: 8px;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             font-weight: 700;
             color: #f59e0b;
-            margin: 0 0 14px;
-            letter-spacing: 0.02em;
+            margin: 0 0 6px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .student-form .form-section-title::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.08);
+            margin-left: 8px;
         }
         .student-form .form-section-title i {
-            font-size: 0.95rem;
+            font-size: 0.85rem;
         }
 
         /* Form grid rows */
         .student-form .form-row {
             display: grid;
-            gap: 14px;
-            margin-bottom: 14px;
+            gap: 10px 12px;
+            margin-bottom: 8px;
             align-items: start;
         }
-        .student-form .names-row  { grid-template-columns: 1fr 1fr 1fr 110px; }
+        .student-form .form-row:last-child {
+            margin-bottom: 0;
+        }
+        .student-form .names-row  { grid-template-columns: 1fr 1fr 1fr 105px; }
         .student-form .two-col    { grid-template-columns: 1fr 1fr; }
         .student-form .three-col  { grid-template-columns: 1fr 1fr 1fr; }
         .student-form .one-col    { grid-template-columns: 1fr; }
@@ -877,13 +1070,13 @@ $totalStudents = count($students);
         .student-form .form-group {
             display: flex;
             flex-direction: column;
-            gap: 5px;
+            gap: 3px;
         }
         .student-form .form-group.full-width { grid-column: 1 / -1; }
 
         /* Labels */
         .student-form label {
-            font-size: 12.5px;
+            font-size: 11.5px;
             font-weight: 500;
             color: #94a3b8;
             letter-spacing: 0.01em;
@@ -896,9 +1089,9 @@ $totalStudents = count($students);
         .student-form textarea {
             width: 100%;
             box-sizing: border-box;
-            padding: 9px 12px;
-            height: 40px;
-            font-size: 13.5px;
+            padding: 7px 11px;
+            height: 36px;
+            font-size: 13px;
             font-family: inherit;
             color: #e2e8f0;
             background: #0d1424;
@@ -924,16 +1117,16 @@ $totalStudents = count($students);
             box-shadow: 0 0 0 3px rgba(245,158,11,0.08);
         }
         .student-form textarea {
-            height: 80px;
+            height: 70px;
             resize: vertical;
         }
 
         /* Section separator */
         .student-form .section-gap {
-            margin-top: 20px;
-            margin-bottom: 14px;
-            border-top: 1px solid rgba(255,255,255,0.05);
-            padding-top: 18px;
+            margin-top: 10px;
+            margin-bottom: 6px;
+            border-top: none;
+            padding-top: 0;
         }
 
         /* Footer */
@@ -942,8 +1135,8 @@ $totalStudents = count($students);
             display: flex;
             align-items: center;
             justify-content: flex-end;
-            gap: 12px;
-            padding: 16px 28px;
+            gap: 10px;
+            padding: 12px 24px;
             border-top: 1px solid rgba(255,255,255,0.06);
             flex-shrink: 0;
             background: #12192b;
@@ -952,8 +1145,8 @@ $totalStudents = count($students);
         /* Cancel button */
         #addStudentModal .btn-cancel-modal,
         #editStudentModal .btn-cancel-modal {
-            padding: 9px 22px;
-            font-size: 13.5px;
+            padding: 8px 20px;
+            font-size: 13px;
             font-weight: 600;
             font-family: inherit;
             color: #cbd5e1;
@@ -974,9 +1167,9 @@ $totalStudents = count($students);
         #editStudentModal .btn-submit-modal {
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 9px 22px;
-            font-size: 13.5px;
+            gap: 7px;
+            padding: 8px 20px;
+            font-size: 13px;
             font-weight: 700;
             font-family: inherit;
             color: #0f172a;
@@ -994,14 +1187,20 @@ $totalStudents = count($students);
         }
         #addStudentModal .btn-submit-modal i,
         #editStudentModal .btn-submit-modal i {
-            font-size: 13px;
+            font-size: 12px;
         }
 
-        /* Error message */
+        /* Error message - only takes space when active */
         .student-form .error-message {
-            font-size: 11.5px;
+            font-size: 11px;
             color: #f87171;
-            min-height: 16px;
+            min-height: 0;
+            line-height: 1.2;
+            margin-top: 1px;
+            display: none;
+        }
+        .student-form .error-message:not(:empty) {
+            display: block;
         }
 
         /* ==========================================================================
@@ -1329,35 +1528,60 @@ $totalStudents = count($students);
                 <!-- Page Header -->
                 <div class="page-header">
                     <div class="header-actions">
-                        <div class="search-filter">
+                        <!-- Top Toolbar Row: Search on Left, Summary + CTA on Right -->
+                        <div class="toolbar-top-row">
                             <div class="search-box-wrapper">
                                 <div class="search-box">
                                     <i class="fa-solid fa-search"></i>
                                     <input type="text" id="searchInput" placeholder="Search by name or school ID...">
                                 </div>
-                                <button class="btn-search" id="searchBtn">
+                                <button class="btn-search" id="searchBtn" type="button">
                                     <i class="fa-solid fa-search"></i>
                                     Search
                                 </button>
                             </div>
-                            <div class="filter-dropdowns">
+
+                            <div class="header-right-group">
                                 <div class="total-students-badge" id="totalStudentsBadge" title="Total active students">
+                                    <i class="fa-solid fa-users badge-icon"></i>
                                     <span class="total-badge-label">Total Students:</span>
                                     <span class="total-badge-num" id="totalStudentCount"><?php echo $totalStudents; ?></span>
                                 </div>
-                                <select id="filterStatus" class="filter-select">
-                                    <option value="">All Status</option>
+                                <button class="btn-primary" id="addStudentBtn" type="button">
+                                    <i class="fa-solid fa-plus"></i>
+                                    Add Student
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Filter Bar Row: Dedicated, Clean Multi-Filter Strip -->
+                        <div class="filter-bar-row">
+                            <div class="filter-group-header">
+                                <i class="fa-solid fa-filter"></i>
+                                <span>Filters:</span>
+                            </div>
+                            <div class="filter-dropdowns">
+                                <select id="filterStatus" class="filter-select" title="Filter by Account Status">
+                                    <option value="">All Account Status</option>
                                     <option value="active">Active</option>
                                     <option value="inactive">Inactive</option>
                                     <option value="suspended">Suspended</option>
                                     <option value="graduated">Graduated</option>
+                                    <option value="pending">Pending</option>
                                 </select>
-                                <select id="filterGrade" class="filter-select">
+                                <select id="filterAssessment" class="filter-select" title="Filter by Assessment Status">
+                                    <option value="">All Assessment Status</option>
+                                    <option value="completed">Completed</option>
+                                    <option value="ongoing">Ongoing</option>
+                                    <option value="not-taken">Not Taken</option>
+                                    <option value="abandoned">Abandoned</option>
+                                </select>
+                                <select id="filterGrade" class="filter-select" title="Filter by Grade Level">
                                     <option value="">All Grades</option>
                                     <option value="11">Grade 11</option>
                                     <option value="12">Grade 12</option>
                                 </select>
-                                <select id="filterStrand" class="filter-select">
+                                <select id="filterStrand" class="filter-select" title="Filter by Strand">
                                     <option value="">All Strands</option>
                                     <?php foreach ($strands as $strand): ?>
                                         <option value="<?php echo strtolower($strand['code']); ?>">
@@ -1365,17 +1589,12 @@ $totalStudents = count($students);
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
+                                <button class="btn-clear" id="clearFilter" type="button" title="Reset all filters">
+                                    <i class="fa-solid fa-rotate-left"></i>
+                                    Clear
+                                </button>
                             </div>
-                            <button class="btn-clear" id="clearFilter">
-                                <i class="fa-solid fa-times"></i>
-                                Clear
-                            </button>
                         </div>
-
-                        <button class="btn-primary" id="addStudentBtn">
-                            <i class="fa-solid fa-plus"></i>
-                            Add Student
-                        </button>
                     </div>
                 </div>
 
@@ -1466,6 +1685,12 @@ $totalStudents = count($students);
                                     <td colspan="7" style="text-align: center; padding: 2rem;">No students found. Add your first student!</td>
                                 </tr>
                                 <?php endif; ?>
+                                <tr id="noFilterResults" style="display: none;">
+                                    <td colspan="7" style="text-align: center; padding: 2.5rem 1rem; color: #94a3b8;">
+                                        <i class="fa-solid fa-filter-circle-xmark" style="font-size: 1.8rem; margin-bottom: 0.6rem; display: block; color: #64748b;"></i>
+                                        No students match the selected filter criteria.
+                                    </td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -1696,7 +1921,10 @@ $totalStudents = count($students);
                         </div>
                         <div class="form-group">
                             <label for="editNewPassword">New Password</label>
-                            <input type="password" id="editNewPassword" name="newPassword" placeholder="Leave blank to keep current">
+                            <div style="position: relative;">
+                                <input type="password" id="editNewPassword" name="newPassword" placeholder="Leave blank to keep current" style="padding-right: 40px;">
+                                <span class="toggle-password" id="toggleEditPassword"><i class="fa-solid fa-eye"></i></span>
+                            </div>
                         </div>
                     </div>
 
@@ -1971,6 +2199,7 @@ $totalStudents = count($students);
             const searchInput = document.getElementById('searchInput');
             const searchBtn = document.getElementById('searchBtn');
             const filterStatus = document.getElementById('filterStatus');
+            const filterAssessment = document.getElementById('filterAssessment');
             const filterGrade = document.getElementById('filterGrade');
             const filterStrand = document.getElementById('filterStrand');
             const clearFilter = document.getElementById('clearFilter');
@@ -2000,6 +2229,7 @@ $totalStudents = count($students);
                                 filterStrand.appendChild(option);
                             });
                             filterStrand.value = '';
+                            applyFilters();
                         }
                     })
                     .catch(error => console.error('Error loading strands:', error));
@@ -2034,6 +2264,7 @@ $totalStudents = count($students);
             function applyFilters() {
                 const searchTerm = (searchInput?.value || '').toLowerCase().trim();
                 const statusValue = (filterStatus?.value || '').toLowerCase();
+                const assessmentValue = (filterAssessment?.value || '').toLowerCase();
                 const gradeValue = filterGrade?.value || '';
                 const strandValue = (filterStrand?.value || '').toLowerCase();
 
@@ -2047,6 +2278,8 @@ $totalStudents = count($students);
                     const rowStatus = (row.getAttribute('data-status') || '').toLowerCase();
                     const rowGrade = row.getAttribute('data-grade') || '';
                     const rowStrand = row.getAttribute('data-strand') || '';
+                    const rowAssessClass = (row.getAttribute('data-assessment-class') || '').toLowerCase();
+                    const rowAssessStatus = (row.getAttribute('data-assessment-status') || '').toLowerCase();
 
                     // Search matches if search term is empty OR if any field contains the search term
                     const matchesSearch = !searchTerm
@@ -2054,10 +2287,20 @@ $totalStudents = count($students);
                         || email.includes(searchTerm)
                         || schoolId.includes(searchTerm);
                     const matchesStatus = !statusValue || rowStatus === statusValue;
+                    
+                    let matchesAssessment = true;
+                    if (assessmentValue) {
+                        if (assessmentValue === 'ongoing' || assessmentValue === 'in-progress') {
+                            matchesAssessment = (rowAssessClass === 'in-progress' || rowAssessStatus === 'ongoing');
+                        } else {
+                            matchesAssessment = (rowAssessClass === assessmentValue || rowAssessStatus === assessmentValue);
+                        }
+                    }
+
                     const matchesGrade = !gradeValue || rowGrade === gradeValue;
                     const matchesStrand = !strandValue || rowStrand.includes(strandValue);
 
-                    const isVisible = matchesSearch && matchesStatus && matchesGrade && matchesStrand;
+                    const isVisible = matchesSearch && matchesStatus && matchesAssessment && matchesGrade && matchesStrand;
                     row.style.display = isVisible ? '' : 'none';
                     if (isVisible) visibleCount++;
                 });
@@ -2065,6 +2308,11 @@ $totalStudents = count($students);
                 const countEl = document.getElementById('totalStudentCount');
                 if (countEl) {
                     countEl.textContent = visibleCount;
+                }
+
+                const noResultsRow = document.getElementById('noFilterResults');
+                if (noResultsRow) {
+                    noResultsRow.style.display = (visibleCount === 0 && rows.length > 0) ? '' : 'none';
                 }
             }
 
@@ -2077,6 +2325,7 @@ $totalStudents = count($students);
                 });
             }
             if (filterStatus) filterStatus.addEventListener('change', applyFilters);
+            if (filterAssessment) filterAssessment.addEventListener('change', applyFilters);
             if (filterGrade) filterGrade.addEventListener('change', function() {
                 loadFilterStrands();
             });
@@ -2087,10 +2336,11 @@ $totalStudents = count($students);
 
             if (clearFilter) {
                 clearFilter.addEventListener('click', function() {
-                    searchInput.value = '';
-                    filterStatus.value = '';
-                    filterGrade.value = '';
-                    filterStrand.value = '';
+                    if (searchInput) searchInput.value = '';
+                    if (filterStatus) filterStatus.value = '';
+                    if (filterAssessment) filterAssessment.value = '';
+                    if (filterGrade) filterGrade.value = '';
+                    if (filterStrand) filterStrand.value = '';
                     loadFilterStrands();
                     applyFilters();
                 });
@@ -2100,6 +2350,21 @@ $totalStudents = count($students);
     <script>
         // -- View Student Modal ------------------------------------------------
         (function() {
+            const toggleEditPwd = document.getElementById('toggleEditPassword');
+            const editPwdInput = document.getElementById('editNewPassword');
+            if (toggleEditPwd && editPwdInput) {
+                toggleEditPwd.addEventListener('click', function() {
+                    const icon = this.querySelector('i');
+                    if (editPwdInput.type === 'password') {
+                        editPwdInput.type = 'text';
+                        icon.className = 'fa-solid fa-eye-slash';
+                    } else {
+                        editPwdInput.type = 'password';
+                        icon.className = 'fa-solid fa-eye';
+                    }
+                });
+            }
+
             const viewModal   = document.getElementById('viewStudentModal');
             const editModal   = document.getElementById('editStudentModal');
             const deleteModal = document.getElementById('deleteModal');

@@ -47,10 +47,9 @@ if ($result) {
 // Fetch Skills Questions
 $result = $mysqli->query("
     SELECT qs.*,
-           COALESCE(sk.name, qs.skill_category, c.name, '') AS classification_value,
+           COALESCE(qs.skill_category, c.name, '') AS classification_value,
            c.name AS competency_name
     FROM questions_skills qs
-    LEFT JOIN skill_categories sk ON qs.skill_category_id = sk.id
     LEFT JOIN competencies c ON qs.competency_id = c.id
     WHERE qs.is_active = 1
     ORDER BY qs.id DESC
@@ -774,19 +773,27 @@ $totalQuestionsCount = count($careerQuestions) + count($personalityQuestions) + 
         }
 
         /* Question Text */
+        .mq-data-table th:first-child,
+        .mq-data-table td:first-child {
+            width: 70px;
+            max-width: 80px;
+            text-align: center;
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+        }
+
         .mq-question-cell {
-            max-width: 480px;
+            width: auto;
+            max-width: none;
+            min-width: 280px;
         }
 
         .mq-question-text {
             font-weight: 500;
             color: #f1f5f9;
-            line-height: 1.45;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            line-height: 1.5;
+            display: block;
+            word-break: break-word;
             cursor: pointer;
             transition: color 0.2s ease;
         }
@@ -1959,7 +1966,7 @@ $totalQuestionsCount = count($careerQuestions) + count($personalityQuestions) + 
                                         data-difficulty="<?php echo htmlspecialchars($diff); ?>" 
                                         data-classification="<?php echo htmlspecialchars(strtolower($classVal)); ?>">
                                         <td style="text-align: center;">
-                                            <span class="mq-no-pill">#<?php echo str_pad($qNum, 2, '0', STR_PAD_LEFT); ?></span>
+                                            <span class="mq-no-pill" title="Item #<?php echo $qNum; ?> (ID: #<?php echo $q['id']; ?>)">#<?php echo str_pad($qNum, 2, '0', STR_PAD_LEFT); ?></span>
                                         </td>
                                         <td class="mq-question-cell">
                                             <span class="mq-question-text" title="<?php echo htmlspecialchars($q['question_text']); ?>">
@@ -2046,7 +2053,7 @@ $totalQuestionsCount = count($careerQuestions) + count($personalityQuestions) + 
                                         data-difficulty="<?php echo htmlspecialchars($diff); ?>" 
                                         data-classification="<?php echo htmlspecialchars(strtolower($classVal)); ?>">
                                         <td style="text-align: center;">
-                                            <span class="mq-no-pill">#<?php echo str_pad($qNum, 2, '0', STR_PAD_LEFT); ?></span>
+                                            <span class="mq-no-pill" title="Item #<?php echo $qNum; ?> (ID: #<?php echo $q['id']; ?>)">#<?php echo str_pad($qNum, 2, '0', STR_PAD_LEFT); ?></span>
                                         </td>
                                         <td class="mq-question-cell">
                                             <span class="mq-question-text" title="<?php echo htmlspecialchars($q['question_text']); ?>">
@@ -2133,7 +2140,7 @@ $totalQuestionsCount = count($careerQuestions) + count($personalityQuestions) + 
                                         data-difficulty="<?php echo htmlspecialchars($diff); ?>" 
                                         data-classification="<?php echo htmlspecialchars(strtolower($classVal)); ?>">
                                         <td style="text-align: center;">
-                                            <span class="mq-no-pill">#<?php echo str_pad($qNum, 2, '0', STR_PAD_LEFT); ?></span>
+                                            <span class="mq-no-pill" title="Item #<?php echo $qNum; ?> (ID: #<?php echo $q['id']; ?>)">#<?php echo str_pad($qNum, 2, '0', STR_PAD_LEFT); ?></span>
                                         </td>
                                         <td class="mq-question-cell">
                                             <span class="mq-question-text" title="<?php echo htmlspecialchars($q['question_text']); ?>">
@@ -2220,7 +2227,7 @@ $totalQuestionsCount = count($careerQuestions) + count($personalityQuestions) + 
                                         data-difficulty="<?php echo htmlspecialchars($diff); ?>" 
                                         data-classification="<?php echo htmlspecialchars(strtolower($classVal)); ?>">
                                         <td style="text-align: center;">
-                                            <span class="mq-no-pill">#<?php echo str_pad($qNum, 2, '0', STR_PAD_LEFT); ?></span>
+                                            <span class="mq-no-pill" title="Item #<?php echo $qNum; ?> (ID: #<?php echo $q['id']; ?>)">#<?php echo str_pad($qNum, 2, '0', STR_PAD_LEFT); ?></span>
                                         </td>
                                         <td class="mq-question-cell">
                                             <span class="mq-question-text" title="<?php echo htmlspecialchars($q['question_text']); ?>">
@@ -3440,6 +3447,7 @@ $totalQuestionsCount = count($careerQuestions) + count($personalityQuestions) + 
                 fd.append('action', 'edit');
                 fd.append('id', document.getElementById('editQuestionId').value);
                 fd.append('category', category);
+                fd.append('old_category', selectedQuestion.category);
                 fd.append('text', text);
                 fd.append('difficulty', document.getElementById('editDifficulty').value);
                 fd.append('classification_value', classificationValue);

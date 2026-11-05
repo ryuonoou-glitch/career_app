@@ -88,16 +88,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && isset($_
             $lastName = trim((string) ($_POST['last_name'] ?? ''));
             $suffix = trim((string) ($_POST['suffix'] ?? ''));
             $email = trim((string) ($_POST['email'] ?? ''));
-            $contact = trim((string) ($_POST['contactNumber'] ?? ''));
 
-            if ($firstName === '' || $lastName === '' || $email === '' || $contact === '') {
-                $response['message'] = 'First name, last name, email, and contact number are required.';
-            } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            if ($firstName === '' || $lastName === '' || $email === '') {
+                $response['message'] = 'First name, last name, and email are required.';
+            } elseif (!isValidEmailAddress($email)) {
                 $response['message'] = 'Please enter a valid email address.';
             } else {
-                $stmt = $mysqli->prepare('UPDATE counselors SET first_name = ?, middle_name = ?, last_name = ?, suffix = ?, email = ?, WHERE id = ? AND status = ?');
+                // Handle Profile Picture Upload
+                if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] === UPLOAD_ERR_OK) {
+                    $uploadDir = __DIR__ . '/uploads/avatars/';
+                    if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+                    $fileName = 'cns_' . $counselorId . '_' . time() . '_' . preg_replace('/[^a-zA-Z0-9.-]/', '_', basename($_FILES['profile_picture']['name']));
+                    if (move_uploaded_file($_FILES['profile_picture']['tmp_name'], $uploadDir . $fileName)) {
+                        $profilePicPath = 'uploads/avatars/' . $fileName;
+                        $picStmt = $mysqli->prepare('UPDATE counselors SET profile_picture = ? WHERE id = ?');
+                        if ($picStmt) {
+                            $picStmt->bind_param('si', $profilePicPath, $counselorId);
+                            $picStmt->execute();
+                            $picStmt->close();
+                        }
+                    }
+                }
+
+                $stmt = $mysqli->prepare('UPDATE counselors SET first_name = ?, middle_name = ?, last_name = ?, suffix = ?, email = ? WHERE id = ? AND status = ?');
                 $status = 'active';
-                $stmt->bind_param('ssssssis', $firstName, $middleName, $lastName, $suffix, $email, $contact, $counselorId, $status);
+                $stmt->bind_param('sssssis', $firstName, $middleName, $lastName, $suffix, $email, $counselorId, $status);
                 if ($stmt->execute()) {
                     $nameParts = array_filter([$firstName, $middleName, $lastName], 'strlen');
                     $fullName = implode(' ', $nameParts);
@@ -108,7 +123,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && isset($_
                     $response['message'] = 'Profile updated successfully!';
                     $response['fullName'] = $fullName;
                     $response['email'] = $email;
-                    $response['contact'] = $contact;
                 } else {
                     $response['message'] = 'Failed to update profile. Email might already be taken.';
                 }
@@ -135,6 +149,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && isset($_
 
                 if (!$row || !password_verify($currentPassword, $row['password'])) {
                     $response['message'] = 'Current password is incorrect.';
+                } elseif (password_verify($newPassword, $row['password']) || $newPassword === $row['password']) {
+                    $response['message'] = 'This is your current password. Please choose a new password.';
                 } else {
                     $hashed = password_hash($newPassword, PASSWORD_DEFAULT);
                     $updateStmt = $mysqli->prepare('UPDATE counselors SET password = ? WHERE id = ?');
@@ -167,7 +183,7 @@ $counselorStatus = 'active';
 
 if (isset($_SESSION['counselor_id'])) {
     $counselorId = (int) $_SESSION['counselor_id'];
-    $stmt = $mysqli->prepare('SELECT first_name, middle_name, last_name, suffix, email, status, created_at FROM counselors WHERE id = ? AND status = ? LIMIT 1');
+    $stmt = $mysqli->prepare('SELECT first_name, middle_name, last_name, suffix, email, status, created_at, profile_picture FROM counselors WHERE id = ? AND status = ? LIMIT 1');
     $status = 'active';
     $stmt->bind_param('is', $counselorId, $status);
     $stmt->execute();
@@ -181,12 +197,12 @@ if (isset($_SESSION['counselor_id'])) {
         $userSuffix = $counselor['suffix'] ?? '';
         $counselorCreatedAt = $counselor['created_at'] ?? date('Y-m-d H:i:s');
         $counselorStatus = $counselor['status'] ?? 'active';
+        $userProfilePic = $counselor['profile_picture'] ?? null;
         
         $cNameParts = array_filter([$userFirstName, $userMiddleName, $userLastName], 'strlen');
         $userName = implode(' ', $cNameParts);
         if (!empty($userSuffix)) $userName .= ' ' . $userSuffix;
         $userEmail = $counselor['email'];
-        $userContact = $counselor['phone'] ?? '';
         $_SESSION['counselor_name'] = $userName;
         $_SESSION['counselor_email'] = $userEmail;
     }
@@ -245,16 +261,35 @@ if ($resA && $row = $resA->fetch_assoc()) {
             box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
             overflow: hidden;
         }
-        .profile-hero-card::before {
+        .profile-hero-card::after {
             content: '';
             position: absolute;
-            top: -60px;
-            right: -60px;
-            width: 260px;
-            height: 260px;
-            background: radial-gradient(circle, rgba(245, 158, 11, 0.15) 0%, rgba(245, 158, 11, 0) 70%);
-            border-radius: 50%;
+            top: 0; right: 0; width: 300px; height: 100%;
+            background: radial-gradient(circle at top right, rgba(245, 158, 11, 0.15), transparent 70%);
             pointer-events: none;
+        }
+
+        .avatar-edit-overlay {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            background: #1e293b;
+            color: #fff;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            cursor: pointer;
+            border: 2px solid rgba(15, 23, 42, 0.8);
+            transition: all 0.2s ease;
+            z-index: 10;
+        }
+        .avatar-edit-overlay:hover {
+            background: #f59e0b;
+            color: #0f172a;
         }
         .profile-hero-content {
             display: flex;
@@ -275,7 +310,7 @@ if ($resA && $row = $resA->fetch_assoc()) {
             position: relative;
             width: 96px;
             height: 96px;
-            border-radius: 24px;
+            border-radius: 50%;
             background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
             display: flex;
             align-items: center;
@@ -287,6 +322,7 @@ if ($resA && $row = $resA->fetch_assoc()) {
             box-shadow: 0 8px 25px rgba(245, 158, 11, 0.35);
             border: 3px solid rgba(255, 255, 255, 0.15);
             flex-shrink: 0;
+            z-index: 2;
         }
         .hero-avatar-status {
             position: absolute;
@@ -1048,8 +1084,15 @@ if ($resA && $row = $resA->fetch_assoc()) {
                         <div class="profile-hero-content">
                             <div class="profile-hero-main">
                                 <div class="hero-avatar-wrapper" id="profileHeroAvatar">
-                                    <?php echo htmlspecialchars($initials); ?>
+                                    <?php if (!empty($userProfilePic) && file_exists(__DIR__ . '/' . $userProfilePic)): ?>
+                                        <img src="<?php echo htmlspecialchars($userProfilePic); ?>" alt="Profile Picture" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">
+                                    <?php else: ?>
+                                        <?php echo htmlspecialchars($initials); ?>
+                                    <?php endif; ?>
                                     <div class="hero-avatar-status" title="Account Status: Active"></div>
+                                    <label for="profilePictureInput" class="avatar-edit-overlay" title="Change Profile Picture">
+                                        <i class="fa-solid fa-camera"></i>
+                                    </label>
                                 </div>
                                 <div class="hero-details">
                                     <div class="hero-name-row">
@@ -1059,6 +1102,9 @@ if ($resA && $row = $resA->fetch_assoc()) {
                                                 <i class="fa-solid fa-user-shield"></i>
                                                 <?php echo htmlspecialchars($userRole); ?>
                                             </span>
+                                            <span class="hero-badge badge-status" style="background-color: rgba(16, 185, 129, 0.15); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3);">
+                                                <i class="fa-solid fa-circle-check"></i> Active
+                                            </span>
                                         </div>
                                     </div>
                                     <div class="hero-meta-chips">
@@ -1066,12 +1112,6 @@ if ($resA && $row = $resA->fetch_assoc()) {
                                             <i class="fa-solid fa-envelope"></i>
                                             <span id="heroEmailDisplay"><?php echo htmlspecialchars($userEmail); ?></span>
                                         </div>
-                                        <?php if (!empty($userContact)): ?>
-                                        <div class="meta-chip">
-                                            <i class="fa-solid fa-phone"></i>
-                                            <span id="heroPhoneDisplay"><?php echo htmlspecialchars($userContact); ?></span>
-                                        </div>
-                                        <?php endif; ?>
                                         <div class="meta-chip">
                                             <i class="fa-solid fa-calendar-check"></i>
                                             <span>Joined <?php echo date('M Y', strtotime($counselorCreatedAt)); ?></span>
@@ -1115,7 +1155,8 @@ if ($resA && $row = $resA->fetch_assoc()) {
 
                             <div id="profileMsgContainer"></div>
 
-                            <form class="grid-form" id="profileForm">
+                            <form class="grid-form" id="profileForm" enctype="multipart/form-data">
+                                <input type="file" id="profilePictureInput" name="profile_picture" accept="image/*" style="display:none;" onchange="previewAvatar(this)">
                                 <div class="form-grid-row three-cols">
                                     <div class="form-field-group">
                                         <label for="firstName">First Name <span class="required-star">*</span></label>
@@ -1153,18 +1194,11 @@ if ($resA && $row = $resA->fetch_assoc()) {
                                             <option value="V" <?php echo ($userSuffix ?? '') === 'V' ? 'selected' : ''; ?>>V</option>
                                         </select>
                                     </div>
-                                    <div class="form-field-group">
+                                    <div class="form-field-group" style="grid-column: span 2;">
                                         <label for="email">Email Address <span class="required-star">*</span></label>
                                         <div class="input-icon-wrapper">
                                             <input type="email" id="email" name="email" value="<?php echo htmlspecialchars($userEmail); ?>" placeholder="counselor@school.edu.ph" required>
                                             <i class="fa-solid fa-envelope lead-icon"></i>
-                                        </div>
-                                    </div>
-                                    <div class="form-field-group">
-                                        <label for="contactNumber">Contact Number <span class="required-star">*</span></label>
-                                        <div class="input-icon-wrapper">
-                                            <input type="tel" id="contactNumber" name="contactNumber" value="<?php echo htmlspecialchars($userContact); ?>" placeholder="e.g. 09171234567" maxlength="12" oninput="this.value = this.value.replace(/[^0-9]/g, '');" required>
-                                            <i class="fa-solid fa-phone lead-icon"></i>
                                         </div>
                                     </div>
                                 </div>
@@ -1319,6 +1353,33 @@ if ($resA && $row = $resA->fetch_assoc()) {
     </div>
 
     <script>
+    function previewAvatar(input) {
+        if (input.files && input.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const avatarWrap = document.getElementById('profileHeroAvatar');
+                // Remove existing initials/image
+                const existingImg = avatarWrap.querySelector('img');
+                if (existingImg) {
+                    existingImg.src = e.target.result;
+                } else {
+                    // It had initials, clear text nodes and append img
+                    Array.from(avatarWrap.childNodes).forEach(node => {
+                        if (node.nodeType === Node.TEXT_NODE) node.remove();
+                    });
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.style.width = '100%';
+                    img.style.height = '100%';
+                    img.style.objectFit = 'cover';
+                    img.style.borderRadius = '50%';
+                    avatarWrap.insertBefore(img, avatarWrap.firstChild);
+                }
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         // ── Mobile Sidebar Toggle ──
         const sidebar = document.getElementById('sidebar');
@@ -1480,15 +1541,10 @@ if ($resA && $row = $resA->fetch_assoc()) {
         if (confirmPassInput) confirmPassInput.addEventListener('input', updatePasswordRules);
 
         // ── Helper to Show Alert Banners ──
-        function showAlert(containerId, type, message) {
-            const container = document.getElementById(containerId);
-            if (!container) return;
-            container.innerHTML = `
-                <div class="profile-alert ${type}">
-                    <i class="fa-solid ${type === 'success' ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i>
-                    <span>${message}</span>
-                </div>
-            `;
+        function showInlineAlert(containerId, type, message) {
+            if (typeof window.showAlert === 'function') {
+                window.showAlert(message, type === 'success' ? 'Success' : 'Error', type === 'success' ? 'fa-circle-check' : 'fa-circle-xmark');
+            }
         }
 
         // ── Profile Form Submission ──
@@ -1505,7 +1561,7 @@ if ($resA && $row = $resA->fetch_assoc()) {
                 const contactNumber = document.getElementById('contactNumber').value.trim();
 
                 if (!firstName || !lastName || !email || !contactNumber) {
-                    showAlert('profileMsgContainer', 'error', 'Please fill in all required fields.');
+                    showInlineAlert('profileMsgContainer', 'error', 'Please fill in all required fields.');
                     return;
                 }
 
@@ -1527,7 +1583,7 @@ if ($resA && $row = $resA->fetch_assoc()) {
                     const res = await fetch('counselor_profile.php', { method: 'POST', body: fd });
                     const data = await res.json();
                     if (data.success) {
-                        showAlert('profileMsgContainer', 'success', data.message || 'Profile updated successfully!');
+                        showInlineAlert('profileMsgContainer', 'success', data.message || 'Profile updated successfully!');
                         
                         // Update Header
                         const heroName = document.getElementById('heroDisplayName');
@@ -1551,11 +1607,11 @@ if ($resA && $row = $resA->fetch_assoc()) {
 
                         saveBtn.innerHTML = '<i class="fa-solid fa-check"></i> <span>Saved!</span>';
                     } else {
-                        showAlert('profileMsgContainer', 'error', data.message || 'Failed to update profile.');
+                        showInlineAlert('profileMsgContainer', 'error', data.message || 'Failed to update profile.');
                         saveBtn.innerHTML = origHtml;
                     }
                 } catch (err) {
-                    showAlert('profileMsgContainer', 'error', 'An error occurred while saving your profile.');
+                    showInlineAlert('profileMsgContainer', 'error', 'An error occurred while saving your profile.');
                     saveBtn.innerHTML = origHtml;
                 }
 
@@ -1577,17 +1633,17 @@ if ($resA && $row = $resA->fetch_assoc()) {
                 const confirmPassword = document.getElementById('confirmPassword').value;
 
                 if (!currentPassword || !newPassword || !confirmPassword) {
-                    showAlert('passwordMsgContainer', 'error', 'Please fill in all password fields.');
+                    showInlineAlert('passwordMsgContainer', 'error', 'Please fill in all password fields.');
                     return;
                 }
 
                 if (newPassword.length < 8) {
-                    showAlert('passwordMsgContainer', 'error', 'New password must be at least 8 characters long.');
+                    showInlineAlert('passwordMsgContainer', 'error', 'New password must be at least 8 characters long.');
                     return;
                 }
 
                 if (newPassword !== confirmPassword) {
-                    showAlert('passwordMsgContainer', 'error', 'New password and confirmation do not match.');
+                    showInlineAlert('passwordMsgContainer', 'error', 'New password and confirmation do not match.');
                     return;
                 }
 
@@ -1605,16 +1661,16 @@ if ($resA && $row = $resA->fetch_assoc()) {
                     const res = await fetch('counselor_profile.php', { method: 'POST', body: fd });
                     const data = await res.json();
                     if (data.success) {
-                        showAlert('passwordMsgContainer', 'success', data.message || 'Password changed successfully!');
+                        showInlineAlert('passwordMsgContainer', 'success', data.message || 'Password changed successfully!');
                         passwordForm.reset();
                         updatePasswordRules();
                         updateBtn.innerHTML = '<i class="fa-solid fa-check"></i> <span>Password Changed!</span>';
                     } else {
-                        showAlert('passwordMsgContainer', 'error', data.message || 'Failed to update password.');
+                        showInlineAlert('passwordMsgContainer', 'error', data.message || 'Failed to update password.');
                         updateBtn.innerHTML = origHtml;
                     }
                 } catch (err) {
-                    showAlert('passwordMsgContainer', 'error', 'An error occurred while updating your password.');
+                    showInlineAlert('passwordMsgContainer', 'error', 'An error occurred while updating your password.');
                     updateBtn.innerHTML = origHtml;
                 }
 

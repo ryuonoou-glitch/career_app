@@ -227,10 +227,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $stmt->close();
             echo json_encode($response); exit;
 
+        case 'check_job_associations':
+            $jobId = (int)($_POST['id'] ?? 0);
+            $check = $mysqli->prepare("SELECT COUNT(*) as count FROM course_jobs WHERE job_id = ?");
+            $check->bind_param('i', $jobId);
+            $check->execute();
+            $count = (int)($check->get_result()->fetch_assoc()['count'] ?? 0);
+            $check->close();
+            echo json_encode(['success' => true, 'count' => $count]);
+            exit;
+
         case 'delete_job':
             $jobId = (int)($_POST['id'] ?? 0);
+            $unlinkCourses = !empty($_POST['unlink_courses']);
             if ($jobId <= 0) {
                 $response['message'] = 'Invalid job ID.';
+                echo json_encode($response); exit;
+            }
+
+            // Check if job is associated with any courses
+            $check = $mysqli->prepare("SELECT COUNT(*) as count FROM course_jobs WHERE job_id = ?");
+            $check->bind_param('i', $jobId);
+            $check->execute();
+            $count = (int)($check->get_result()->fetch_assoc()['count'] ?? 0);
+            $check->close();
+
+            if ($count > 0 && !$unlinkCourses) {
+                $response['has_associations'] = true;
+                $response['count'] = $count;
+                $response['message'] = 'This job is currently associated with one or more courses. Please confirm unlinking courses.';
                 echo json_encode($response); exit;
             }
 
@@ -244,9 +269,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $oldStmt->close();
             }
 
-            $stmt = $mysqli->prepare("DELETE FROM jobs WHERE id = ?");
-            $stmt->bind_param('i', $jobId);
-            if ($stmt->execute()) {
+            // Database transaction: unlink course_jobs (and job_competencies), then delete job
+            $mysqli->begin_transaction();
+            try {
+                if ($count > 0) {
+                    $delCJ = $mysqli->prepare("DELETE FROM course_jobs WHERE job_id = ?");
+                    $delCJ->bind_param('i', $jobId);
+                    if (!$delCJ->execute()) {
+                        throw new Exception('Failed to remove course associations: ' . $delCJ->error);
+                    }
+                    $delCJ->close();
+                }
+
+                $delJC = $mysqli->prepare("DELETE FROM job_competencies WHERE job_id = ?");
+                $delJC->bind_param('i', $jobId);
+                $delJC->execute();
+                $delJC->close();
+
+                $stmt = $mysqli->prepare("DELETE FROM jobs WHERE id = ?");
+                $stmt->bind_param('i', $jobId);
+                if (!$stmt->execute()) {
+                    throw new Exception('Failed to delete job: ' . $stmt->error);
+                }
+                $stmt->close();
+
+                $mysqli->commit();
+
                 $response['success'] = true;
                 $response['message'] = 'Job deleted successfully.';
 
@@ -254,11 +302,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $userId = $_SESSION['admin_id'] ?? $_SESSION['counselor_id'] ?? 0;
                 $userType = isset($_SESSION['admin_id']) ? 'admin' : 'counselor';
                 $jobTitle = $oldJob['job_title'] ?? "ID {$jobId}";
-                log_activity($userId, $userType, 'Deleted Job', 'jobs', $jobId, "Admin deleted job: {$jobTitle}", json_encode($oldJob), null);
-            } else {
-                $response['message'] = 'Failed to delete job.';
+                log_activity($userId, $userType, 'Deleted Job', 'jobs', $jobId, "Admin deleted job: {$jobTitle}" . ($count > 0 ? " (unlinked {$count} course association(s))" : ""), json_encode($oldJob), null);
+            } catch (Exception $ex) {
+                $mysqli->rollback();
+                $response['success'] = false;
+                $response['message'] = $ex->getMessage();
             }
-            $stmt->close();
             echo json_encode($response); exit;
 
         // -- Get all jobs (for course modal inline picker) ----
@@ -376,7 +425,7 @@ if ($clRes) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Manage Jobs - <?php echo htmlspecialchars(getSystemConfig('short_name')); ?></title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="admin.css">
+    <link rel="stylesheet" href="admin.css?v=<?php echo filemtime('admin.css'); ?>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
         /* -- Standardized Add & Edit Job Modal Styling (Matches Manage Schools) -- */
@@ -805,164 +854,191 @@ if ($clRes) {
             font-size: 1rem;
         }
 
-        /* -- Modern Manage Jobs Page Header & Actions -- */
-        .schools-page-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-            flex-wrap: wrap;
-        }
-        .header-title-box {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-        .schools-count-badge {
-            background: rgba(245, 158, 11, 0.15);
-            border: 1px solid rgba(245, 158, 11, 0.3);
-            color: #fbbf24;
-            padding: 0.35rem 0.85rem;
-            border-radius: 999px;
-            font-size: 0.82rem;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-        }
-        .btn-add-school-main {
-            background: linear-gradient(135deg, #f59e0b, #d97706);
-            color: #0f172a;
-            border: none;
-            padding: 0.7rem 1.35rem;
-            border-radius: 10px;
-            font-weight: 700;
-            font-size: 0.92rem;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.6rem;
-            cursor: pointer;
-            box-shadow: 0 4px 14px rgba(245, 158, 11, 0.28);
-            transition: all 0.2s ease;
-        }
-        .btn-add-school-main:hover {
-            background: linear-gradient(135deg, #fbbf24, #f59e0b);
-            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
-            transform: translateY(-2px);
-        }
-
-        /* -- Modern Frosted Glass Search & Filter Card -- */
+        /* -- Modern Manage Jobs Single-Row Toolbar -- */
         .schools-filter-card {
             background: rgba(30, 41, 59, 0.6);
             border: 1px solid rgba(255, 255, 255, 0.08);
             backdrop-filter: blur(12px);
             border-radius: 14px;
-            padding: 1.25rem 1.5rem;
-            margin-bottom: 1.75rem;
+            padding: 0.65rem 0.85rem;
+            margin-bottom: 1.5rem;
             box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-        }
-        .filter-grid {
-            display: grid;
-            grid-template-columns: 2fr 1.5fr auto;
-            gap: 1rem;
-            align-items: flex-end;
-        }
-        @media (max-width: 900px) {
-            .filter-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        .filter-field {
             display: flex;
-            flex-direction: column;
+            align-items: center;
             gap: 0.45rem;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            scrollbar-width: thin;
         }
-        .filter-field label {
-            font-size: 0.76rem;
+
+        .schools-count-badge {
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            color: #fbbf24;
+            padding: 0 0.75rem;
+            height: 38px;
+            border-radius: 9px;
+            font-size: 0.8rem;
             font-weight: 700;
-            color: #94a3b8;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+            box-sizing: border-box;
         }
+
         .filter-input-wrap {
             position: relative;
             display: flex;
             align-items: center;
+            flex-shrink: 0;
         }
+
+        .filter-input-wrap.search-input-wrap {
+            flex: 1 1 200px;
+            min-width: 140px;
+            max-width: 320px;
+        }
+
+        .filter-input-wrap.select-wrap {
+            flex: 0 1 180px;
+            min-width: 130px;
+            max-width: 220px;
+        }
+
         .filter-input-wrap i {
             position: absolute;
-            left: 0.85rem;
+            left: 0.65rem;
             color: #64748b;
-            font-size: 0.85rem;
+            font-size: 0.78rem;
             pointer-events: none;
             z-index: 1;
         }
+
         .filter-input-wrap input,
         .filter-input-wrap select {
             width: 100%;
-            padding: 0.65rem 0.85rem 0.65rem 2.25rem;
+            height: 38px;
+            padding: 0 0.65rem 0 1.85rem;
             background: rgba(15, 23, 42, 0.6);
             border: 1px solid rgba(255, 255, 255, 0.1);
             border-radius: 9px;
             color: #f1f5f9;
-            font-size: 0.88rem;
+            font-size: 0.8rem;
+            font-weight: 500;
             transition: all 0.2s;
             outline: none;
             box-sizing: border-box;
+            white-space: nowrap;
+            text-overflow: ellipsis;
         }
+
+        .filter-input-wrap select {
+            appearance: none;
+            -webkit-appearance: none;
+            padding-right: 1.45rem;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.45rem center;
+            cursor: pointer;
+        }
+
         .filter-input-wrap input:focus,
         .filter-input-wrap select:focus {
             border-color: #f59e0b;
             background: rgba(15, 23, 42, 0.85);
             box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
         }
+
         .filter-input-wrap select option {
             background: #0f172a;
             color: #f1f5f9;
         }
-        .filter-btn-group {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
+
         .btn-filter-search {
+            height: 38px;
+            box-sizing: border-box;
             background: linear-gradient(135deg, #f59e0b, #d97706);
             color: #0f172a;
             border: none;
-            padding: 0.65rem 1.2rem;
+            padding: 0 0.85rem;
             border-radius: 9px;
             font-weight: 700;
-            font-size: 0.88rem;
+            font-size: 0.8rem;
             display: inline-flex;
             align-items: center;
-            gap: 0.45rem;
+            gap: 0.35rem;
             cursor: pointer;
             transition: all 0.2s;
             white-space: nowrap;
+            flex-shrink: 0;
         }
+
         .btn-filter-search:hover {
             background: linear-gradient(135deg, #fbbf24, #f59e0b);
             transform: translateY(-1px);
         }
+
         .btn-filter-clear {
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #94a3b8;
-            padding: 0.65rem 1rem;
+            height: 38px;
+            box-sizing: border-box;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            color: #e2e8f0;
+            padding: 0 0.75rem;
             border-radius: 9px;
             font-weight: 600;
-            font-size: 0.88rem;
+            font-size: 0.8rem;
             display: inline-flex;
             align-items: center;
-            gap: 0.45rem;
+            gap: 0.35rem;
             cursor: pointer;
             transition: all 0.2s;
             white-space: nowrap;
+            flex-shrink: 0;
         }
+
         .btn-filter-clear:hover {
-            background: rgba(255, 255, 255, 0.12);
-            color: #f8fafc;
+            background: rgba(239, 68, 68, 0.2);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: #fca5a5;
+        }
+
+        .btn-add-school-main {
+            height: 38px;
+            box-sizing: border-box;
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: #0f172a;
+            border: none;
+            padding: 0 1rem;
+            border-radius: 9px;
+            font-weight: 700;
+            font-size: 0.82rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(245, 158, 11, 0.28);
+            transition: all 0.2s ease;
+            white-space: nowrap;
+            flex-shrink: 0;
+            margin-left: auto;
+        }
+
+        .btn-add-school-main:hover {
+            background: linear-gradient(135deg, #fbbf24, #f59e0b);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+            transform: translateY(-1px);
+        }
+
+        @media (max-width: 900px) {
+            .schools-filter-card {
+                flex-wrap: wrap;
+            }
+            .btn-add-school-main {
+                margin-left: 0;
+            }
         }
 
         /* -- Modern Jobs Grid (3 Columns) -- */
@@ -1596,51 +1672,39 @@ if ($clRes) {
             <!-- Dashboard Content -->
             <div class="dashboard-content">
 
-                <!-- Page Header with Count Badge & Add Job Button (Matches Manage Schools) -->
-                <div class="schools-page-header">
-                    <div class="header-title-box">
-                        <span class="schools-count-badge" id="jobsTotalCount">
-                            <i class="fa-solid fa-briefcase"></i>
-                            <span id="jobsCountText"><?php echo count($jobs); ?> Jobs</span>
-                        </span>
+                <!-- Modern Search, Filter & Action Toolbar (Single Row) -->
+                <div class="schools-filter-card">
+                    <span class="schools-count-badge" id="jobsTotalCount">
+                        <i class="fa-solid fa-briefcase"></i>
+                        <span id="jobsCountText"><?php echo count($jobs); ?> Jobs</span>
+                    </span>
+                    
+                    <div class="filter-input-wrap search-input-wrap">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="searchJobTitle" placeholder="Search by job title or keyword...">
                     </div>
+
+                    <div class="filter-input-wrap select-wrap">
+                        <i class="fa-solid fa-layer-group"></i>
+                        <select id="searchCluster">
+                            <option value="">All Career Clusters</option>
+                            <?php foreach ($allClusters as $cl): ?>
+                            <option value="<?php echo $cl['id']; ?>"><?php echo htmlspecialchars($cl['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <button type="button" class="btn-filter-search" id="searchBtn">
+                        <i class="fa-solid fa-filter"></i> Search
+                    </button>
+                    <button type="button" class="btn-filter-clear" id="clearBtn">
+                        <i class="fa-solid fa-rotate-left"></i> Clear
+                    </button>
+
                     <button class="btn-add-school-main" id="addJobBtn">
                         <i class="fa-solid fa-plus"></i>
                         <span>Add Job</span>
                     </button>
-                </div>
-
-                <!-- Modern Search & Filter Toolbar Card (Matches Manage Schools) -->
-                <div class="schools-filter-card">
-                    <div class="filter-grid">
-                        <div class="filter-field">
-                            <label for="searchJobTitle">Job Title</label>
-                            <div class="filter-input-wrap">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                <input type="text" id="searchJobTitle" placeholder="Search by job title or keyword...">
-                            </div>
-                        </div>
-                        <div class="filter-field">
-                            <label for="searchCluster">Career Cluster</label>
-                            <div class="filter-input-wrap">
-                                <i class="fa-solid fa-layer-group"></i>
-                                <select id="searchCluster">
-                                    <option value="">All Career Clusters</option>
-                                    <?php foreach ($allClusters as $cl): ?>
-                                    <option value="<?php echo $cl['id']; ?>"><?php echo htmlspecialchars($cl['name']); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="filter-btn-group">
-                            <button type="button" class="btn-filter-search" id="searchBtn">
-                                <i class="fa-solid fa-filter"></i> Search
-                            </button>
-                            <button type="button" class="btn-filter-clear" id="clearBtn">
-                                <i class="fa-solid fa-rotate-left"></i> Clear
-                            </button>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Jobs Grid (Matches Manage Schools Layout) -->
@@ -1709,7 +1773,7 @@ if ($clRes) {
                                     <i class="fa-solid fa-pen"></i>
                                     <span>Edit</span>
                                 </button>
-                                <button type="button" class="btn-card-action btn-action delete" data-id="<?php echo $job['id']; ?>" title="Delete Job">
+                                <button type="button" class="btn-card-action btn-action delete" data-id="<?php echo $job['id']; ?>" data-name="<?php echo htmlspecialchars($job['job_title'] ?? ''); ?>" data-course-count="<?php echo (int)($job['course_count'] ?? 0); ?>" title="Delete Job">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
                             </div>
@@ -1943,15 +2007,15 @@ if ($clRes) {
     <div class="modal" id="deleteModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2><i class="fa-solid fa-trash-can"></i> Delete Job</h2>
+                <h2><i class="fa-solid fa-trash-can"></i> <span id="deleteJobModalTitle">Delete Job</span></h2>
                 <button class="modal-close" id="closeDeleteModal"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="modal-body">
                 <div class="delete-confirm-message" style="text-align: center; padding: 1.5rem 1rem;">
                     <i class="fa-solid fa-triangle-exclamation" style="font-size: 3rem; color: #f59e0b; margin-bottom: 1rem; display: block;"></i>
-                    <p style="font-size: 1.1rem; font-weight: 600; color: #f8fafc; margin-bottom: 0.5rem;">Are you sure you want to delete this job?</p>
+                    <p id="deleteJobMessage" style="font-size: 1.1rem; font-weight: 600; color: #f8fafc; margin-bottom: 0.5rem;">Are you sure you want to delete this job?</p>
                     <p class="delete-job-name" id="deleteJobName" style="color: #fbbf24; font-weight: 700; font-size: 1.05rem; margin-bottom: 0.5rem;"></p>
-                    <small style="color: #94a3b8;">This will also unlink the job from all affiliated courses. This action cannot be undone.</small>
+                    <small id="deleteJobWarning" style="color: #94a3b8;">This action cannot be undone.</small>
                 </div>
             </div>
             <div class="modal-footer">
@@ -2427,11 +2491,47 @@ if ($clRes) {
         // Delete Job Action
         // =========================================================
         let deleteJobId = null;
+        let unlinkJobCoursesMode = false;
+
         document.querySelectorAll('.btn-card-action.delete').forEach(btn => {
-            btn.addEventListener('click', function() {
+            btn.addEventListener('click', async function() {
                 const card = this.closest('.job-card');
                 deleteJobId = this.getAttribute('data-id');
-                document.getElementById('deleteJobName').textContent = card.dataset.title || '';
+                unlinkJobCoursesMode = false;
+
+                const jobTitle = this.getAttribute('data-name') || (card ? (card.dataset.title || card.querySelector('.school-name')?.textContent?.trim() || '') : '');
+                document.getElementById('deleteJobName').textContent = jobTitle;
+
+                const titleEl = document.getElementById('deleteJobModalTitle');
+                const msgEl = document.getElementById('deleteJobMessage');
+                const warningEl = document.getElementById('deleteJobWarning');
+                const confirmBtn = document.getElementById('confirmDelete');
+
+                let courseCount = parseInt(this.getAttribute('data-course-count') || '0', 10);
+                try {
+                    const fd = new FormData();
+                    fd.append('action', 'check_job_associations');
+                    fd.append('id', deleteJobId);
+                    const res = await apiPost(fd);
+                    if (res && res.success && typeof res.count !== 'undefined') {
+                        courseCount = res.count;
+                    }
+                } catch (e) {}
+
+                if (courseCount > 0) {
+                    unlinkJobCoursesMode = true;
+                    if (titleEl) titleEl.textContent = 'Delete Job?';
+                    if (msgEl) msgEl.textContent = 'This job is currently associated with one or more courses. Deleting this job will remove its course associations. The courses themselves will not be deleted.';
+                    if (warningEl) warningEl.textContent = `(${courseCount} course association${courseCount > 1 ? 's' : ''} will be unlinked)`;
+                    if (confirmBtn) confirmBtn.textContent = 'Unlink Courses & Delete';
+                } else {
+                    unlinkJobCoursesMode = false;
+                    if (titleEl) titleEl.textContent = 'Delete Job';
+                    if (msgEl) msgEl.textContent = 'Are you sure you want to delete this job?';
+                    if (warningEl) warningEl.textContent = 'This action cannot be undone.';
+                    if (confirmBtn) confirmBtn.textContent = 'Delete';
+                }
+
                 deleteModal.classList.add('active');
             });
         });
@@ -2441,6 +2541,9 @@ if ($clRes) {
             const fd = new FormData();
             fd.append('action', 'delete_job');
             fd.append('id', deleteJobId);
+            if (unlinkJobCoursesMode) {
+                fd.append('unlink_courses', '1');
+            }
 
             deleteModal.classList.remove('active');
             try {

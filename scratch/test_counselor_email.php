@@ -1,2 +1,0 @@
-<?php
-// Scratch test file

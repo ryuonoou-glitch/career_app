@@ -19,7 +19,6 @@ $cPct     = (float)($course['match_percentage'] ?? 0);
 $cDesc    = $course['description'] ?? '';
 
 $cBreakdown = $course['breakdown'] ?? null;
-$cClusterPct  = $cBreakdown ? round((float)$cBreakdown['cluster_alignment'], 1) : 0;
 $cSkillsPct   = $cBreakdown ? round((float)$cBreakdown['skills_part'],     1) : 0;
 $cCareerPct   = $cBreakdown ? round((float)$cBreakdown['career_part'],    1) : 0;
 $cPersonPct   = $cBreakdown ? round((float)$cBreakdown['personality_part'],1) : 0;
@@ -58,19 +57,11 @@ $cStrandPct   = $cBreakdown ? round((float)$cBreakdown['strand_part'],     1) : 
                 <i class="fa-solid fa-chart-bar"></i> Score Breakdown
             </p>
 
-            <div class="rcm-bar-row">
-                <div class="rcm-bar-meta">
-                    <span class="rcm-bar-label">Cluster Alignment</span>
-                    <span class="rcm-bar-pct"><?php echo $cClusterPct; ?>%</span>
-                </div>
-                <div class="rcm-bar-track">
-                    <div class="rcm-bar-fill cluster" style="width:<?php echo min(100, max(0, $cClusterPct)); ?>%;"></div>
-                </div>
-            </div>
+
 
             <div class="rcm-bar-row">
                 <div class="rcm-bar-meta">
-                    <span class="rcm-bar-label">Competency Match</span>
+                    <span class="rcm-bar-label">Course Competency Match</span>
                     <span class="rcm-bar-pct"><?php echo $cSkillsPct; ?>%</span>
                 </div>
                 <div class="rcm-bar-track">
@@ -80,7 +71,7 @@ $cStrandPct   = $cBreakdown ? round((float)$cBreakdown['strand_part'],     1) : 
 
             <div class="rcm-bar-row">
                 <div class="rcm-bar-meta">
-                    <span class="rcm-bar-label">Career Fit</span>
+                    <span class="rcm-bar-label">Career Interest</span>
                     <span class="rcm-bar-pct"><?php echo $cCareerPct; ?>%</span>
                 </div>
                 <div class="rcm-bar-track">
@@ -90,7 +81,7 @@ $cStrandPct   = $cBreakdown ? round((float)$cBreakdown['strand_part'],     1) : 
 
             <div class="rcm-bar-row">
                 <div class="rcm-bar-meta">
-                    <span class="rcm-bar-label">Personality Match</span>
+                    <span class="rcm-bar-label">Personality & Traits</span>
                     <span class="rcm-bar-pct"><?php echo $cPersonPct; ?>%</span>
                 </div>
                 <div class="rcm-bar-track">

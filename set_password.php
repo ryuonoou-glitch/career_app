@@ -48,7 +48,7 @@ $tableMap = ['student' => 'students', 'counselor' => 'counselors', 'admin' => 'a
 
 foreach ($rolesToCheck as $role => $data) {
     $tableName = $tableMap[$role];
-    $flagCheck = $mysqli->prepare("SELECT must_change_password FROM {$tableName} WHERE id = ? LIMIT 1");
+    $flagCheck = $mysqli->prepare("SELECT must_change_password, password FROM {$tableName} WHERE id = ? LIMIT 1");
     if ($flagCheck) {
         $flagCheck->bind_param('i', $data['id']);
         $flagCheck->execute();
@@ -104,6 +104,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
            || !preg_match('/\d/',    $newPassword)
            || !preg_match('/[!@#$%^&*()\-_=+\[\]{};\':"\\\\|,.<>\/?]/', $newPassword)) {
         $errorMsg = 'Password must include uppercase, lowercase, a number, and a special character.';
+    } elseif (isset($flagRow['password']) && (password_verify($newPassword, $flagRow['password']) || $newPassword === $flagRow['password'])) {
+        $errorMsg = 'This is your current password. Please choose a new password.';
     } else {
         $hash = password_hash($newPassword, PASSWORD_DEFAULT);
         $upd  = $mysqli->prepare("UPDATE {$tableName} SET password = ?, must_change_password = 0 WHERE id = ?");

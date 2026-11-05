@@ -62,8 +62,8 @@ document.addEventListener('DOMContentLoaded', function () {
     function toggleAdminButton() {
         if (isAdminVisible) {
             // Hide admin button
-            adminLoginBtn.setAttribute('style', 'display: none !important; visibility: hidden !important; opacity: 0 !important;');
-            adminNavBtn.setAttribute('style', 'display: none !important; visibility: hidden !important; opacity: 0 !important;');
+            if (adminLoginBtn) adminLoginBtn.setAttribute('style', 'display: none !important; visibility: hidden !important; opacity: 0 !important;');
+            if (adminNavBtn) adminNavBtn.setAttribute('style', 'display: none !important; visibility: hidden !important; opacity: 0 !important;');
             isAdminVisible = false;
             if (adminTimeout) {
                 clearTimeout(adminTimeout);
@@ -71,14 +71,14 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         } else {
             // Show admin button
-            adminLoginBtn.setAttribute('style', 'display: block !important; visibility: visible !important; opacity: 1 !important;');
-            adminNavBtn.setAttribute('style', 'display: block !important; visibility: visible !important; opacity: 1 !important;');
+            if (adminLoginBtn) adminLoginBtn.setAttribute('style', 'display: block !important; visibility: visible !important; opacity: 1 !important;');
+            if (adminNavBtn) adminNavBtn.setAttribute('style', 'display: block !important; visibility: visible !important; opacity: 1 !important;');
             isAdminVisible = true;
 
             // Auto-hide after 10 seconds
             adminTimeout = setTimeout(() => {
-                adminLoginBtn.setAttribute('style', 'display: none !important; visibility: hidden !important; opacity: 0 !important;');
-                adminNavBtn.setAttribute('style', 'display: none !important; visibility: hidden !important; opacity: 0 !important;');
+                if (adminLoginBtn) adminLoginBtn.setAttribute('style', 'display: none !important; visibility: hidden !important; opacity: 0 !important;');
+                if (adminNavBtn) adminNavBtn.setAttribute('style', 'display: none !important; visibility: hidden !important; opacity: 0 !important;');
                 isAdminVisible = false;
                 adminTimeout = null;
             }, 10000);
@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // Ctrl+Q key combination handler
     document.addEventListener('keydown', function (e) {
         // Check for Ctrl+Q (or Cmd+Q on Mac)
-        if ((e.ctrlKey || e.metaKey) && e.key === 'q') {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'q') {
             e.preventDefault();
             toggleAdminButton();
         }
@@ -716,22 +716,31 @@ function initializeAssessment() {
 
     if (!assessmentTypeSelection) return;
 
+    // Initialize Medical & Physical Considerations Modal
+    initMedicalDeclarationModal();
+
+    // Immediately resume from MySQL if an active in-progress assessment exists on server
+    if (window.serverActiveAssessment && window.serverActiveAssessment.assessmentId) {
+        resumeSequentialAssessment(window.serverActiveAssessment);
+        return;
+    }
+
     // Hide individual assessment type cards and show sequential assessment
-    const assessmentTypes = document.querySelector('.assessment-types');
-    if (assessmentTypes) {
+    const regionContainer = document.getElementById('regionSelectionContainer');
+    if (regionContainer) {
         if (window.assessmentLimit && window.assessmentLimit.hasReachedLimit) {
             // They have reached the limit, show the region selection but disabled, and show a modal
-            showRegionSelectionUI(assessmentTypes, true);
+            showRegionSelectionUI(regionContainer, true);
             showLimitReachedModal();
             return;
         }
 
-        showRegionSelectionUI(assessmentTypes, false);
+        showRegionSelectionUI(regionContainer, false);
 
         // Pre-select the saved preferred region if it exists
         const preferredRegion = window.savedPreferredRegion || '';
         if (preferredRegion) {
-            const checkboxes = assessmentTypes.querySelectorAll('input[name="preferred_region_option"]');
+            const checkboxes = regionContainer.querySelectorAll('input[name="preferred_region_option"]');
             const savedRegions = preferredRegion.split(',');
             if (preferredRegion === 'All') {
                 checkboxes.forEach(cb => cb.checked = true);
@@ -766,18 +775,161 @@ function showLimitReachedModal() {
     document.body.insertAdjacentHTML('beforeend', modalHtml);
 }
 
+// Global state for medical declaration
+window.medicalDeclarationCompleted = false;
+
+function initMedicalDeclarationModal() {
+    const modal = document.getElementById('medicalDeclarationModal');
+    if (!modal) return;
+
+    const overlay = document.getElementById('medicalModalOverlay');
+    const closeBtn = document.getElementById('closeMedicalModalBtn');
+    const cancelBtn = document.getElementById('cancelMedicalModalBtn');
+    const confirmBtn = document.getElementById('confirmMedicalModalBtn');
+
+    const medCheckboxes = modal.querySelectorAll('input[name="modal_med_consideration"]');
+    const noneCheckbox = document.getElementById('modalMedNoneCheckbox');
+    const otherCheckbox = document.getElementById('modalMedOtherCheckbox');
+    const otherDescContainer = document.getElementById('modalMedOtherDescContainer');
+    const otherDescInput = document.getElementById('modalMedOtherDesc');
+    const ackCheckbox = document.getElementById('modalMedAckCheckbox');
+
+    function syncModalConfirmBtn() {
+        if (!confirmBtn) return;
+        const anyChecked = Array.from(medCheckboxes).some(cb => cb.checked);
+        const ack = ackCheckbox ? ackCheckbox.checked : false;
+
+        if (anyChecked && ack) {
+            confirmBtn.removeAttribute('disabled');
+            confirmBtn.style.cursor = 'pointer';
+            confirmBtn.style.opacity = '1';
+        } else {
+            confirmBtn.setAttribute('disabled', 'disabled');
+            confirmBtn.style.cursor = 'not-allowed';
+            confirmBtn.style.opacity = '0.5';
+        }
+    }
+
+    // Populate from savedMedicalDeclaration or assessmentState.medicalDeclaration if present
+    const saved = window.savedMedicalDeclaration || (assessmentState && assessmentState.medicalDeclaration);
+    if (saved && typeof saved === 'object') {
+        medCheckboxes.forEach(cb => {
+            if (saved[cb.value]) {
+                cb.checked = true;
+            }
+        });
+        if (saved['other']) {
+            if (otherDescContainer) otherDescContainer.style.display = 'block';
+            if (otherDescInput && saved['other_description']) {
+                otherDescInput.value = saved['other_description'];
+            }
+        }
+        if (ackCheckbox && saved['acknowledged']) {
+            ackCheckbox.checked = true;
+        }
+        if (saved['acknowledged']) {
+            window.medicalDeclarationCompleted = true;
+            if (assessmentState) {
+                assessmentState.medicalDeclaration = saved;
+            }
+        }
+        syncModalConfirmBtn();
+    }
+
+    window.openMedicalModal = function(onSuccessCallback) {
+        if (!modal) return;
+        window.pendingMedicalSuccessCallback = onSuccessCallback || null;
+        modal.classList.add('active');
+        modal.style.display = 'flex';
+        syncModalConfirmBtn();
+    };
+
+    window.closeMedicalModal = function() {
+        if (!modal) return;
+        modal.classList.remove('active');
+        modal.style.display = 'none';
+        window.pendingMedicalSuccessCallback = null;
+    };
+
+    if (closeBtn) closeBtn.onclick = window.closeMedicalModal;
+    if (cancelBtn) cancelBtn.onclick = window.closeMedicalModal;
+    if (overlay) overlay.onclick = window.closeMedicalModal;
+
+    medCheckboxes.forEach(cb => {
+        cb.addEventListener('change', function() {
+            if (this.value === 'none' && this.checked) {
+                medCheckboxes.forEach(otherCb => {
+                    if (otherCb.value !== 'none') otherCb.checked = false;
+                });
+                if (otherDescContainer) otherDescContainer.style.display = 'none';
+                if (otherDescInput) otherDescInput.value = '';
+            } else if (this.value !== 'none' && this.checked) {
+                if (noneCheckbox) noneCheckbox.checked = false;
+            }
+
+            if (this.value === 'other') {
+                if (otherDescContainer) otherDescContainer.style.display = this.checked ? 'block' : 'none';
+            }
+            syncModalConfirmBtn();
+        });
+    });
+
+    if (ackCheckbox) {
+        ackCheckbox.addEventListener('change', syncModalConfirmBtn);
+    }
+
+    if (confirmBtn) {
+        confirmBtn.onclick = function() {
+            const anyChecked = Array.from(medCheckboxes).some(cb => cb.checked);
+            const ack = ackCheckbox ? ackCheckbox.checked : false;
+            if (!anyChecked || !ack) return;
+
+            let medicalDeclaration = {};
+            medCheckboxes.forEach(cb => {
+                medicalDeclaration[cb.value] = cb.checked;
+            });
+            if (medicalDeclaration['other']) {
+                medicalDeclaration['other_description'] = otherDescInput ? otherDescInput.value.trim() : '';
+            } else {
+                medicalDeclaration['other_description'] = '';
+            }
+            medicalDeclaration['acknowledged'] = ack;
+
+            if (assessmentState) {
+                assessmentState.medicalDeclaration = medicalDeclaration;
+            }
+            window.medicalDeclarationCompleted = true;
+
+            // Close modal
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+
+            // Show status badge if present
+            const medBadge = document.getElementById('medicalStatusBadgeContainer');
+            if (medBadge) medBadge.style.display = 'block';
+
+            // Trigger pending callback
+            const cb = window.pendingMedicalSuccessCallback;
+            window.pendingMedicalSuccessCallback = null;
+            if (typeof cb === 'function') {
+                cb();
+            }
+        };
+    }
+}
+
 function showRegionSelectionUI(container, isDisabled = false) {
     container.innerHTML = `
             <div class="sequential-assessment-info" style="max-width: 580px; margin: 0 auto;">
                 <div class="sequence-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b; width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1.5rem; font-size: 1.8rem;">
                     <i class="fa-solid fa-map-location-dot"></i>
                 </div>
-                <h3 style="font-size: 1.5rem; color: #f1f5f9; margin-bottom: 0.35rem; text-align: center;">Select Your Preferred District</h3>
+                <h3 style="font-size: 1.5rem; color: #f1f5f9; margin-bottom: 0.35rem; text-align: center;">Select Your Preferred School District(s)</h3>
                 <p style="font-size: 0.78rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #f59e0b; text-align: center; margin-bottom: 0.6rem;">
                     <i class="fa-solid fa-location-dot" style="margin-right:4px;"></i>Pangasinan
                 </p>
                 <p style="color: #94a3b8; font-size: 0.95rem; line-height: 1.6; margin-bottom: 1.25rem; text-align: center;">
-                    Please select your preferred district(s). You may choose multiple districts. This choice is mandatory and will prioritize matching schools on your results.
+                    Choose the district(s) where you prefer to find schools. You may select multiple districts.
                 </p>
 
                 <!-- Select All toggle -->
@@ -837,8 +989,16 @@ function showRegionSelectionUI(container, isDisabled = false) {
                         </div>
                     </label>
                 </div>
+
+                <div id="medicalStatusBadgeContainer" style="text-align: center; margin: 0.75rem 0 0.25rem; display: ${window.medicalDeclarationCompleted ? 'block' : 'none'};">
+                    <button type="button" id="btnEditMedicalDeclaration" style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); color: #f59e0b; padding: 0.45rem 1rem; border-radius: 20px; font-size: 0.82rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.5rem; transition: all 0.2s ease;">
+                        <i class="fa-solid fa-notes-medical"></i>
+                        <span>Medical Considerations Declared</span>
+                        <span style="color: #94a3b8; font-size: 0.78rem; text-decoration: underline;">(Review / Edit)</span>
+                    </button>
+                </div>
                 
-                <button class="start-assessment-btn" id="btnProceedToAssessment" style="width: 100%; margin-top: 1.5rem;" disabled>
+                <button class="start-assessment-btn" id="btnProceedToAssessment" style="width: 100%; margin-top: 1.25rem;" disabled>
                     <i class="fa-solid fa-play"></i>
                     Start Assessment
                 </button>
@@ -984,33 +1144,80 @@ function showRegionSelectionUI(container, isDisabled = false) {
     const proceedBtn = document.getElementById('btnProceedToAssessment');
     const selectAllChk = document.getElementById('selectAllDistricts');
     const selectAllLabel = document.getElementById('selectAllDistrictsLabel');
-
     const checkboxes = container.querySelectorAll('input[name="preferred_region_option"]');
+    const regionCards = container.querySelectorAll('.region-option-card');
+    const btnEditMed = container.querySelector('#btnEditMedicalDeclaration');
 
     function syncProceedBtn() {
-        const anyChecked = Array.from(checkboxes).some(cb => cb.checked);
+        const anyRegionChecked = Array.from(checkboxes).some(cb => cb.checked);
+        const isMedValid = !!(window.medicalDeclarationCompleted && assessmentState.medicalDeclaration && assessmentState.medicalDeclaration.acknowledged);
+
         if (proceedBtn) {
-            if (anyChecked) {
+            if (anyRegionChecked && isMedValid) {
                 proceedBtn.removeAttribute('disabled');
             } else {
                 proceedBtn.setAttribute('disabled', 'disabled');
             }
         }
         // Sync select-all visual state
-        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+        const allChecked = checkboxes.length > 0 && Array.from(checkboxes).every(cb => cb.checked);
         if (selectAllChk) selectAllChk.checked = allChecked;
         if (selectAllLabel) {
             if (allChecked) selectAllLabel.classList.add('all-checked');
             else selectAllLabel.classList.remove('all-checked');
         }
+
+        // Sync medical badge visibility
+        const medBadge = document.getElementById('medicalStatusBadgeContainer');
+        if (medBadge) {
+            medBadge.style.display = isMedValid ? 'block' : 'none';
+        }
     }
 
-    // Handle individual checkboxes
+    if (!isDisabled) {
+        // Intercept clicks on district cards if medical declaration not completed
+        regionCards.forEach(card => {
+            card.addEventListener('click', function(e) {
+                if (!window.medicalDeclarationCompleted) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const cb = card.querySelector('input[name="preferred_region_option"]');
+                    if (window.openMedicalModal) {
+                        window.openMedicalModal(() => {
+                            if (cb) {
+                                cb.checked = true;
+                            }
+                            syncProceedBtn();
+                        });
+                    }
+                }
+            });
+        });
+
+        // Intercept select-all click if medical declaration not completed
+        if (selectAllLabel) {
+            selectAllLabel.addEventListener('click', function(e) {
+                if (!window.medicalDeclarationCompleted) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (window.openMedicalModal) {
+                        window.openMedicalModal(() => {
+                            if (selectAllChk) selectAllChk.checked = true;
+                            checkboxes.forEach(cb => { cb.checked = true; });
+                            syncProceedBtn();
+                        });
+                    }
+                }
+            });
+        }
+    }
+
+    // Handle individual checkboxes change
     checkboxes.forEach(cb => {
         cb.addEventListener('change', syncProceedBtn);
     });
 
-    // Handle Select All
+    // Handle Select All change
     if (selectAllChk) {
         selectAllChk.addEventListener('change', function () {
             checkboxes.forEach(cb => { cb.checked = this.checked; });
@@ -1018,8 +1225,29 @@ function showRegionSelectionUI(container, isDisabled = false) {
         });
     }
 
+    // Handle Edit Medical Declaration
+    if (btnEditMed) {
+        btnEditMed.addEventListener('click', function(e) {
+            e.preventDefault();
+            if (window.openMedicalModal) {
+                window.openMedicalModal(() => {
+                    syncProceedBtn();
+                });
+            }
+        });
+    }
+
     if (proceedBtn) {
         proceedBtn.addEventListener('click', function () {
+            if (!window.medicalDeclarationCompleted || !assessmentState.medicalDeclaration || !assessmentState.medicalDeclaration.acknowledged) {
+                if (window.openMedicalModal) {
+                    window.openMedicalModal(() => {
+                        syncProceedBtn();
+                    });
+                }
+                return;
+            }
+
             const selectedValues = Array.from(checkboxes)
                 .filter(cb => cb.checked)
                 .map(cb => cb.value);
@@ -1152,7 +1380,7 @@ async function startSequentialAssessment() {
 
     // Start assessment on server (if function exists from take_assessment.php)
     if (typeof startAssessmentOnServer === 'function') {
-        const result = await startAssessmentOnServer(assessmentState.currentType, assessmentState.region);
+        const result = await startAssessmentOnServer(assessmentState.currentType, assessmentState.region, assessmentState.medicalDeclaration);
         if (result && result.assessment_id) {
             assessmentState.assessment_id = result.assessment_id;
         }
@@ -1182,13 +1410,28 @@ async function startSequentialAssessment() {
 }
 
 function resumeSequentialAssessment(progressData) {
+    if (!progressData) return;
     assessmentState.currentAssessmentIndex = progressData.currentAssessmentIndex || 0;
-    assessmentState.currentType = progressData.type || assessmentState.assessmentSequence[0];
+    assessmentState.currentType = progressData.type || assessmentState.assessmentSequence[assessmentState.currentAssessmentIndex] || assessmentState.assessmentSequence[0];
     assessmentState.currentQuestion = progressData.currentQuestion || 0;
-    assessmentState.answers = progressData.answers || {};
+    assessmentState.answers = Object.assign({}, progressData.answers || {});
     assessmentState.assessment_id = progressData.assessmentId || null;
-    assessmentState.region = progressData.region || '';
+    assessmentState.region = progressData.region || window.savedPreferredRegion || 'All';
     assessmentState.questions = getAssessmentQuestions(assessmentState.currentType);
+
+    // Sync saved answers cache to prevent redundant re-saving
+    if (assessmentState.assessment_id && assessmentState.answers) {
+        if (!assessmentState.savedAnswers) assessmentState.savedAnswers = {};
+        for (const [key, val] of Object.entries(assessmentState.answers)) {
+            const parts = key.split('_');
+            if (parts.length >= 2) {
+                const qType = parts[0];
+                const qId = parts[1];
+                const saveKey = `${assessmentState.assessment_id}:${qType}:${qId}`;
+                assessmentState.savedAnswers[saveKey] = typeof val === 'object' ? JSON.stringify(val) : String(val);
+            }
+        }
+    }
 
     // Show questions section, hide selection
     const selection = document.getElementById('assessmentTypeSelection');
@@ -1207,6 +1450,9 @@ function resumeSequentialAssessment(progressData) {
     loadQuestion();
     updateProgress();
     updateNavigationButtons();
+
+    // Persist current state in local storage for this device/browser
+    saveAssessmentProgress();
 }
 
 // Load current question
@@ -1214,24 +1460,28 @@ function loadQuestion() {
     // Only check region selection if we are actually are on the assessment page
     const isAssessmentPage = document.getElementById('assessmentTypeSelection') && document.getElementById('assessmentQuestions');
     if (isAssessmentPage && !assessmentState.region) {
-        // Buffer current progress so user can pick region to resume
-        const progressData = {
-            type: assessmentState.currentType,
-            currentAssessmentIndex: assessmentState.currentAssessmentIndex,
-            currentQuestion: assessmentState.currentQuestion,
-            answers: assessmentState.answers,
-            assessmentId: assessmentState.assessment_id,
-            region: assessmentState.region,
-            savedAt: new Date().toISOString()
-        };
-        window.pendingAssessmentProgress = progressData;
+        if (assessmentState.assessment_id) {
+            assessmentState.region = window.savedPreferredRegion || 'All';
+        } else {
+            // Buffer current progress so user can pick region to resume
+            const progressData = {
+                type: assessmentState.currentType,
+                currentAssessmentIndex: assessmentState.currentAssessmentIndex,
+                currentQuestion: assessmentState.currentQuestion,
+                answers: assessmentState.answers,
+                assessmentId: assessmentState.assessment_id,
+                region: assessmentState.region,
+                savedAt: new Date().toISOString()
+            };
+            window.pendingAssessmentProgress = progressData;
 
-        // Show selection UI and prompt user
-        const selection = document.getElementById('assessmentTypeSelection');
-        const questions = document.getElementById('assessmentQuestions');
-        if (selection) selection.style.display = 'block';
-        if (questions) questions.style.display = 'none';
-        return;
+            // Show selection UI and prompt user
+            const selection = document.getElementById('assessmentTypeSelection');
+            const questions = document.getElementById('assessmentQuestions');
+            if (selection) selection.style.display = 'block';
+            if (questions) questions.style.display = 'none';
+            return;
+        }
     }
 
     const question = assessmentState.questions[assessmentState.currentQuestion];
@@ -1306,7 +1556,6 @@ function loadQuestion() {
             likertLabelsContainer.innerHTML = `
                     <span>Strongly Disagree</span>
                     <span>Disagree</span>
-                    <span>Neutral</span>
                     <span>Agree</span>
                     <span>Strongly Agree</span>
                 `;
@@ -1315,7 +1564,7 @@ function loadQuestion() {
             const likertOptions = document.createElement('div');
             likertOptions.className = 'likert-options';
 
-            const likertLabels = ['A', 'B', 'C', 'D', 'E'];
+            const likertLabels = ['A', 'B', 'C', 'D'];
             likertLabels.forEach((labelText, index) => {
                 const optionItem = document.createElement('div');
                 optionItem.className = 'likert-item';
@@ -1371,7 +1620,7 @@ function loadQuestion() {
 
             likertContainer.appendChild(likertOptions);
             questionOptions.appendChild(likertContainer);
-        } else {
+        } else if (Array.isArray(question.options)) {
             // Handle radio/checkbox questions
             question.options.forEach((option, index) => {
                 const optionItem = document.createElement('div');
@@ -1385,10 +1634,21 @@ function loadQuestion() {
 
                 const answerKey = `${assessmentState.currentType}_${question.id}`;
                 if (assessmentState.answers[answerKey]) {
-                    if (question.type === 'radio' && assessmentState.answers[answerKey] === option) {
+                    const currentAns = assessmentState.answers[answerKey];
+                    let ansCompare = currentAns;
+                    if (typeof currentAns === 'object' && currentAns !== null) {
+                        ansCompare = currentAns.option_id ?? currentAns.text ?? currentAns.label ?? '';
+                    }
+                    const isOptionMatch = (ansCompare === option) ||
+                        (question.option_map && question.option_map[index] && (
+                            String(question.option_map[index].id) === String(ansCompare) ||
+                            question.option_map[index].text === ansCompare ||
+                            question.option_map[index].label === ansCompare
+                        ));
+                    if (question.type === 'radio' && isOptionMatch) {
                         input.checked = true;
                         optionItem.classList.add('selected');
-                    } else if (question.type === 'checkbox' && assessmentState.answers[answerKey].includes(option)) {
+                    } else if (question.type === 'checkbox' && (Array.isArray(currentAns) ? currentAns.includes(option) : isOptionMatch)) {
                         input.checked = true;
                         optionItem.classList.add('selected');
                     }
@@ -1537,8 +1797,9 @@ function updateNavigationButtons() {
     const isLastQuestion = hasQuestion && assessmentState.currentQuestion === assessmentState.questions.length - 1;
     const showNavigation = hasQuestion && assessmentState.questions.length > 0;
 
+    const canGoBack = assessmentState.currentQuestion > 0 || assessmentState.currentAssessmentIndex > 0;
     if (btnBack) {
-        btnBack.style.display = showNavigation && assessmentState.currentQuestion > 0 ? 'flex' : 'none';
+        btnBack.style.display = showNavigation && canGoBack ? 'flex' : 'none';
     }
 
     if (btnNext) {
@@ -1558,6 +1819,21 @@ function previousQuestion() {
         saveAssessmentProgress();
         assessmentState.currentQuestion--;
         loadQuestion();
+        saveAssessmentProgress();
+    } else if (assessmentState.currentAssessmentIndex > 0) {
+        saveAssessmentProgress();
+        assessmentState.currentAssessmentIndex--;
+        assessmentState.currentType = assessmentState.assessmentSequence[assessmentState.currentAssessmentIndex];
+        assessmentState.questions = getAssessmentQuestions(assessmentState.currentType);
+        assessmentState.currentQuestion = Math.max(0, assessmentState.questions.length - 1);
+
+        const categoryInfo = document.getElementById('assessmentCategoryInfo');
+        if (categoryInfo && assessmentState.currentType) {
+            categoryInfo.innerHTML = `${assessmentState.currentType.charAt(0).toUpperCase() + assessmentState.currentType.slice(1)} Assessment &middot; ${assessmentState.currentAssessmentIndex + 1} of 4`;
+        }
+
+        loadQuestion();
+        updateProgress();
         saveAssessmentProgress();
     }
 }
@@ -1872,9 +2148,30 @@ function clearSavedAssessmentProgress() {
 
 // Load assessment progress
 async function loadAssessmentProgress() {
+    // 1. If serverActiveAssessment exists from MySQL database:
+    if (window.serverActiveAssessment && window.serverActiveAssessment.assessmentId) {
+        let progressData = Object.assign({}, window.serverActiveAssessment);
+        try {
+            const local = JSON.parse(localStorage.getItem('assessment_progress') || '{}');
+            if (local && String(local.assessmentId) === String(progressData.assessmentId) && local.answers) {
+                progressData.answers = Object.assign({}, local.answers, progressData.answers);
+            }
+        } catch (e) {}
+
+        resumeSequentialAssessment(progressData);
+        return;
+    }
+
+    // 2. Fallback to localStorage (for offline/cache)
     const savedProgress = localStorage.getItem('assessment_progress');
     if (savedProgress) {
-        const progressData = JSON.parse(savedProgress);
+        let progressData;
+        try {
+            progressData = JSON.parse(savedProgress);
+        } catch (e) {
+            localStorage.removeItem('assessment_progress');
+            return;
+        }
 
         // Check if progress is recent (within 24 hours)
         const savedTime = new Date(progressData.savedAt);
@@ -1882,8 +2179,6 @@ async function loadAssessmentProgress() {
         const hoursDiff = (now - savedTime) / (1000 * 60 * 60);
 
         if (hoursDiff < 24) {
-            // Only resume if there's an actual in-progress assessment:
-            // requires a type and either an assessmentId, saved answers, or non-zero currentQuestion
             const hasType = !!progressData.type;
             const hasAssessmentId = !!progressData.assessmentId;
             const hasAnswers = progressData.answers && Object.keys(progressData.answers).length > 0;
@@ -1911,22 +2206,16 @@ async function loadAssessmentProgress() {
                                 showRegionSelectionUI(assessmentTypes);
                             }
                         }
-                        try {
-                            ale('Your previous assessment session is no longer available.This session can no longer be continued.Please return to the assessment selection screen.   ');
-                        } catch (e) { /* ignore */ }
                         return;
                     }
                 }
 
-                // If region is present, resume immediately
-                if (progressData.region) {
-                    resumeSequentialAssessment(progressData);
-                    return;
+                if (!progressData.region) {
+                    progressData.region = window.savedPreferredRegion || 'All';
                 }
 
-                // Otherwise hold onto the saved progress and prompt the user to select region
-                window.pendingAssessmentProgress = progressData;
-                try { alert('Saved assessment found. Please select your region to resume where you left off.'); } catch (e) { /* ignore */ }
+                // Immediately resume without prompting user
+                resumeSequentialAssessment(progressData);
                 return;
             }
 
@@ -3417,6 +3706,11 @@ function startOTPTimer() {
         const minutes = Math.floor(seconds / 60);
         const remainingSeconds = seconds % 60;
         timerElement.textContent = `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+
+        // Unlock the resend button after 60 seconds (when timer hits 4:00)
+        if (seconds <= 240 && resendBtn && resendBtn.disabled) {
+            resendBtn.disabled = false;
+        }
 
         if (seconds <= 0) {
             clearInterval(otpTimerInterval);

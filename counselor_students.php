@@ -74,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $middleName = $middleName !== '' ? ucwords(strtolower($middleName)) : '';
             $lastName   = $lastName   !== '' ? ucwords(strtolower($lastName))   : '';
 
-            if ($firstName === '' || $lastName === '' || $email === '' || $studentId === '' || $gender === '') {
+            if ($firstName === '' || $lastName === '' || $email === '' || $studentId === '' || $gender === '' || $strandCode === '' || $gradeLevelDb === '') {
                 throw new Exception('Please fill in all required fields.');
             }
 

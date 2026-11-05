@@ -182,6 +182,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $kpiRes = $kpiStmt->get_result()->fetch_assoc();
             $kpiStmt->close();
 
+            // KPI Accuracy
+            $kpiAccSql = "
+                SELECT 
+                    COUNT(DISTINCT re.assessment_id) AS total_evaluated_assessments,
+                    COUNT(re.id) AS total_evaluated,
+                    SUM(CASE WHEN re.is_aligned = 1 THEN 1 ELSE 0 END) AS total_aligned
+                FROM recommendation_evaluations re
+                JOIN student_assessments sa ON re.assessment_id = sa.id
+                JOIN students s ON sa.student_id = s.id
+                LEFT JOIN strands st ON s.strand_id = st.id
+                LEFT JOIN school_years sy ON sa.school_year_id = sy.id OR s.school_year_id = sy.id
+                WHERE $whereSql
+            ";
+            $kpiAccStmt = $mysqli->prepare($kpiAccSql);
+            if ($types !== '') { $kpiAccStmt->bind_param($types, ...$params); }
+            $kpiAccStmt->execute();
+            $kpiAccRes = $kpiAccStmt->get_result()->fetch_assoc();
+            $kpiAccStmt->close();
+
+            $totalEvalAssessments = (int)($kpiAccRes['total_evaluated_assessments'] ?? 0);
+            $totalEvaluated = (int)($kpiAccRes['total_evaluated'] ?? 0);
+            $totalAligned = (int)($kpiAccRes['total_aligned'] ?? 0);
+            $totalNotAligned = $totalEvaluated - $totalAligned;
+            $accuracyPct = $totalEvaluated > 0 ? round(($totalAligned / $totalEvaluated) * 100, 1) : 0;
+
             // Top recommended course for matching filter set
             $topCourseSql = "
                 SELECT c.course_name, COUNT(*) as cnt
@@ -208,7 +233,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 'total_students'          => (int)($kpiRes['total_students'] ?? 0),
                 'total_completed'         => (int)($kpiRes['total_completed'] ?? 0),
                 'avg_score'               => round((float)($kpiRes['avg_score'] ?? 0), 1) . '%',
-                'most_recommended_course' => $topCourseRes['course_name'] ?? 'N/A'
+                'most_recommended_course' => $topCourseRes['course_name'] ?? 'N/A',
+                'accuracy_pct'            => $accuracyPct . '%',
+                'accuracy_aligned'        => $totalAligned,
+                'accuracy_evaluated'      => $totalEvaluated,
+                'accuracy_assessments'    => $totalEvalAssessments,
+                'accuracy_not_aligned'    => $totalNotAligned
             ];
 
             // 4. Chart Data Generation
@@ -682,9 +712,8 @@ $mostChosenCluster = $mostChosenClusterResult->fetch_assoc()['name'] ?? 'N/A';
             line-height: 1.2 !important;
             color: #ffffff !important;
             margin: 0.2rem 0 0.35rem 0 !important;
-            white-space: nowrap !important;
-            overflow: hidden !important;
-            text-overflow: ellipsis !important;
+            white-space: normal !important;
+            word-wrap: break-word !important;
             min-width: 0 !important;
             max-width: 100% !important;
             width: 100% !important;
@@ -1345,6 +1374,50 @@ $mostChosenCluster = $mostChosenClusterResult->fetch_assoc()['name'] ?? 'N/A';
                         </div>
                     </div>
 
+                    <!-- Accuracy Analytics -->
+                    <div class="stats-cards reports-stats-cards-5" style="margin-top: 1rem;">
+                        <div class="stat-card summary-stat-card" style="border-color: rgba(59, 130, 246, 0.3);">
+                            <div class="summary-card-header">
+                                <span class="summary-card-icon" style="background: rgba(59,130,246,0.16); color:#60a5fa;"><i class="fa-solid fa-clipboard-user"></i></span>
+                                <span class="summary-card-label">Evaluated Assessments</span>
+                            </div>
+                            <div class="summary-card-value" id="kpi-acc-assessments">0</div>
+                            <small class="summary-card-sub">Total verified</small>
+                        </div>
+                        <div class="stat-card summary-stat-card" style="border-color: rgba(168, 85, 247, 0.3);">
+                            <div class="summary-card-header">
+                                <span class="summary-card-icon" style="background: rgba(168,85,247,0.16); color:#c084fc;"><i class="fa-solid fa-list-check"></i></span>
+                                <span class="summary-card-label">Evaluated Recommendations</span>
+                            </div>
+                            <div class="summary-card-value" id="kpi-acc-evaluated">0</div>
+                            <small class="summary-card-sub">Total evaluated</small>
+                        </div>
+                        <div class="stat-card summary-stat-card" style="border-color: rgba(16, 185, 129, 0.3);">
+                            <div class="summary-card-header">
+                                <span class="summary-card-icon" style="background: rgba(16,185,129,0.16); color:#34d399;"><i class="fa-solid fa-check-double"></i></span>
+                                <span class="summary-card-label">Aligned Recommendations</span>
+                            </div>
+                            <div class="summary-card-value" id="kpi-acc-aligned">0</div>
+                            <small class="summary-card-sub">Aligned with career goals</small>
+                        </div>
+                        <div class="stat-card summary-stat-card" style="border-color: rgba(239, 68, 68, 0.3);">
+                            <div class="summary-card-header">
+                                <span class="summary-card-icon" style="background: rgba(239,68,68,0.16); color:#f87171;"><i class="fa-solid fa-xmark"></i></span>
+                                <span class="summary-card-label">Not Aligned</span>
+                            </div>
+                            <div class="summary-card-value" id="kpi-acc-not-aligned">0</div>
+                            <small class="summary-card-sub">Recommendations altered</small>
+                        </div>
+                        <div class="stat-card summary-stat-card" style="border-color: rgba(245, 158, 11, 0.3);">
+                            <div class="summary-card-header">
+                                <span class="summary-card-icon" style="background: rgba(245,158,11,0.16); color:#fbbf24;"><i class="fa-solid fa-bullseye"></i></span>
+                                <span class="summary-card-label">Overall Accuracy</span>
+                            </div>
+                            <div class="summary-card-value" id="kpi-acc-pct">0%</div>
+                            <small class="summary-card-sub">System recommendation accuracy</small>
+                        </div>
+                    </div>
+
                     <!-- Consolidated Responsive Horizontal Filter Bar (Zero-Overflow Guarantee) -->
                     <div class="records-filter-bar-unified">
                         <!-- School Year -->
@@ -1529,6 +1602,18 @@ $mostChosenCluster = $mostChosenClusterResult->fetch_assoc()['name'] ?? 'N/A';
                 elTopCourse.textContent = topCourse;
                 elTopCourse.title = topCourse;
             }
+            
+            const elAccAssessments = document.getElementById('kpi-acc-assessments');
+            const elAccEvaluated   = document.getElementById('kpi-acc-evaluated');
+            const elAccAligned     = document.getElementById('kpi-acc-aligned');
+            const elAccNotAligned  = document.getElementById('kpi-acc-not-aligned');
+            const elAccPct         = document.getElementById('kpi-acc-pct');
+
+            if (elAccAssessments) elAccAssessments.textContent = (stats.accuracy_assessments || 0).toLocaleString();
+            if (elAccEvaluated)   elAccEvaluated.textContent   = (stats.accuracy_evaluated || 0).toLocaleString();
+            if (elAccAligned)     elAccAligned.textContent     = (stats.accuracy_aligned || 0).toLocaleString();
+            if (elAccNotAligned)  elAccNotAligned.textContent  = (stats.accuracy_not_aligned || 0).toLocaleString();
+            if (elAccPct)         elAccPct.textContent         = stats.accuracy_pct || '0%';
         }
 
         // Helper: HTML Escaping

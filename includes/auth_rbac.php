@@ -112,7 +112,8 @@ function has_permission($permission) {
             'view_all_activity',
             'view_own_activity',
             'manage_counselors',
-            'manage_system_settings'
+            'manage_system_settings',
+            'view_schools'
         ],
         'counselor' => [
             'view_dashboard',
@@ -122,7 +123,8 @@ function has_permission($permission) {
             'view_reports',
             'export_reports',
             'manage_questions', // Full question configuration: create, edit, archive
-            'view_own_activity'
+            'view_own_activity',
+            'view_schools'
         ]
     ];
     

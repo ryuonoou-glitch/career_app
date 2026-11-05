@@ -15,14 +15,14 @@ $preferredRegion = '1';
 $allAssessments = [];
 $MAX_ASSESSMENTS = 2;
 
-if ($student) {
-    // Get ALL completed assessments for this student (for history panel)
-    $histStmt = $mysqli->prepare("
-        SELECT id, completed_at, status
-        FROM student_assessments
-        WHERE student_id = ? AND status = 'completed'
-        ORDER BY completed_at ASC, id ASC
-    ");
+    if ($student) {
+        // Get ALL completed AND verified assessments for this student (for history panel)
+        $histStmt = $mysqli->prepare("
+            SELECT id, completed_at, status, verification_status
+            FROM student_assessments
+            WHERE student_id = ? AND status = 'completed' AND verification_status = 'verified'
+            ORDER BY completed_at ASC, id ASC
+        ");
     if ($histStmt) {
         $histStmt->bind_param("i", $student['id']);
         $histStmt->execute();
@@ -37,10 +37,11 @@ if ($student) {
     foreach ($allAssessments as &$attempt) {
         $topStmt = $mysqli->prepare("
             SELECT c.course_name, r.match_percentage
-            FROM recommendations r
-            JOIN courses c ON r.course_id = c.id
-            WHERE r.assessment_id = ?
-            ORDER BY r.rank ASC
+            FROM verified_recommendations vr
+            JOIN courses c ON vr.course_id = c.id
+            LEFT JOIN recommendations r ON vr.course_id = r.course_id AND vr.assessment_id = r.assessment_id
+            WHERE vr.assessment_id = ?
+            ORDER BY vr.rank ASC
             LIMIT 1
         ");
         if ($topStmt) {
@@ -101,11 +102,12 @@ if ($student) {
         $confidenceData = checkRecommendationConfidence($scoredCourses);
 
         $stmt = $mysqli->prepare("
-            SELECT c.*, r.match_percentage, r.explanation, r.rank
-            FROM recommendations r
-            JOIN courses c ON r.course_id = c.id
-            WHERE r.assessment_id = ?
-            ORDER BY r.rank ASC, r.match_percentage DESC
+            SELECT c.*, r.match_percentage, r.explanation, vr.rank
+            FROM verified_recommendations vr
+            JOIN courses c ON vr.course_id = c.id
+            LEFT JOIN recommendations r ON vr.course_id = r.course_id AND vr.assessment_id = r.assessment_id
+            WHERE vr.assessment_id = ?
+            ORDER BY vr.rank ASC
             LIMIT 5
         ");
         $stmt->bind_param("i", $viewingAttemptId);
@@ -438,9 +440,9 @@ sort($tabDistricts);
         .rc-confidence-banner p  { margin:0; color:#cbd5e1; font-size:0.85rem; line-height:1.5; }
 
         /* ── Footer note ─────────────────────────────── */
-        .rc-footer-note { display:flex; align-items:center; gap:8px; padding:0 0 1.5rem; }
-        .rc-footer-note i { color:#475569; font-size:0.8rem; flex-shrink:0; }
-        .rc-footer-note span { font-size:0.78rem; color:#475569; }
+        .rc-footer-note { display:flex; align-items:center; gap:8px; padding:0 0 1.5rem; justify-content: center; margin-top: 1rem; }
+        .rc-footer-note i { color:#60a5fa; font-size:1rem; flex-shrink:0; }
+        .rc-footer-note span { font-size:0.85rem; color:#cbd5e1; font-weight: 500; }
 
         /* ── Empty state ─────────────────────────────── */
         .rc-empty { text-align:center; padding:4rem 1rem; color:#64748b; }
@@ -1606,6 +1608,17 @@ sort($tabDistricts);
             ════════════════════════════════════════════════ -->
             <div class="rc-tab-panel active" id="tabPanelCourses" role="tabpanel">
 
+                <!-- Medical Advisory Banner (courses tab only) -->
+                <?php if (!empty($hasMedicalAdvisory) && $hasMedicalAdvisory): ?>
+                <div class="rc-confidence-banner" style="background:rgba(239, 68, 68, 0.08); border-color:rgba(239, 68, 68, 0.25);">
+                    <i class="fa-solid fa-notes-medical" style="color:#ef4444;"></i>
+                    <div>
+                        <h4 style="color:#ef4444;">Medical Clearance Advisory</h4>
+                        <p>Some requirements for these recommended courses or career pathways may include medical, vision, hearing, or physical standards. Please discuss the specific requirements with your Guidance Counselor and the appropriate medical professional or regulatory authority.</p>
+                    </div>
+                </div>
+                <?php endif; ?>
+
                 <!-- Low confidence warning (courses tab only) -->
                 <?php if (!empty($confidenceData) && $confidenceData['is_low_confidence']): ?>
                 <div class="rc-confidence-banner">
@@ -2036,7 +2049,6 @@ sort($tabDistricts);
                 $tExpl    = trim($topCourse['explanation'] ?? '');
                 $tPct     = (float)$topCourse['match_percentage'];
                 $tDesc    = $topCourse['description'] ?? '';
-                $tClusterPct = round((float)($topCourse['breakdown']['cluster_alignment'] ?? 0), 1);
                 $tSkillsPct  = round((float)($topCourse['breakdown']['skills_part'] ?? 0), 1);
                 $tCareerPct  = round((float)($topCourse['breakdown']['career_part'] ?? 0), 1);
                 $tPersonPct  = round((float)($topCourse['breakdown']['personality_part'] ?? 0), 1);
@@ -2075,17 +2087,7 @@ sort($tabDistricts);
 
                         <div class="rcm-bar-row">
                             <div class="rcm-bar-meta">
-                                <span class="rcm-bar-label">Cluster Alignment</span>
-                                <span class="rcm-bar-pct"><?php echo $tClusterPct; ?>%</span>
-                            </div>
-                            <div class="rcm-bar-track">
-                                <div class="rcm-bar-fill cluster" style="width:<?php echo min(100,$tClusterPct); ?>%;"></div>
-                            </div>
-                        </div>
-
-                        <div class="rcm-bar-row">
-                            <div class="rcm-bar-meta">
-                                <span class="rcm-bar-label">Competency Match</span>
+                                <span class="rcm-bar-label">Course Competency Match</span>
                                 <span class="rcm-bar-pct"><?php echo $tSkillsPct; ?>%</span>
                             </div>
                             <div class="rcm-bar-track">
@@ -2095,7 +2097,7 @@ sort($tabDistricts);
 
                         <div class="rcm-bar-row">
                             <div class="rcm-bar-meta">
-                                <span class="rcm-bar-label">Career Fit</span>
+                                <span class="rcm-bar-label">Career Interest</span>
                                 <span class="rcm-bar-pct"><?php echo $tCareerPct; ?>%</span>
                             </div>
                             <div class="rcm-bar-track">
@@ -2105,7 +2107,7 @@ sort($tabDistricts);
 
                         <div class="rcm-bar-row">
                             <div class="rcm-bar-meta">
-                                <span class="rcm-bar-label">Personality Match</span>
+                                <span class="rcm-bar-label">Personality & Traits</span>
                                 <span class="rcm-bar-pct"><?php echo $tPersonPct; ?>%</span>
                             </div>
                             <div class="rcm-bar-track">

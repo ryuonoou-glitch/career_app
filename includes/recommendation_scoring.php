@@ -6,15 +6,15 @@ require_once __DIR__ . '/notify.php';
  */
 function normalizeAnswerToLikertScale($likertValue, $score, $isCorrect = null) {
     if ($likertValue !== null && $likertValue !== '') {
-        return max(1, min(5, (float) $likertValue));
+        return max(1, min(4, (float) $likertValue));
     }
 
     if ($isCorrect !== null) {
-        return $isCorrect ? 5.0 : 0.0;
+        return $isCorrect ? 4.0 : 0.0;
     }
 
     if ($score !== null && $score !== '') {
-        return ($score > 0) ? 5.0 : 0.0;
+        return ($score > 0) ? 4.0 : 0.0;
     }
 
     return null;
@@ -24,9 +24,9 @@ function normalizeAnswerToLikertScale($likertValue, $score, $isCorrect = null) {
  * Convert a 1–5 scale value to a 0–100 percentage.
  */
 function likertToPercentage($likertValue) {
-    // Map 1-5 scale to 0-100 (1=0%, 2=25%, 3=50%, 4=75%, 5=100%)
+    // Map 1-4 scale to 0-100 (1=0%, 2=33.3%, 3=66.6%, 4=100%)
     // If a raw score is 0 (e.g. incorrect answer), max(0) keeps it at 0%.
-    return min(100, max(0, round(($likertValue - 1) * 25, 2)));
+    return min(100, max(0, round(($likertValue - 1) * (100 / 3), 2)));
 }
 
 /**
@@ -417,6 +417,7 @@ function calculateCourseScores($mysqli, $assessmentId) {
                cl.name as cluster_name, cl.holland_traits, cl.bigfive_traits, cl.shs_strands 
         FROM courses c
         LEFT JOIN clusters cl ON c.cluster_id = cl.id
+        WHERE c.course_name NOT LIKE '%Mass Communication%'
     ");
     
     if (!$courseStmt) {
@@ -433,20 +434,16 @@ function calculateCourseScores($mysqli, $assessmentId) {
         
         $strandPart = min(100, max(0, (float) ($categoryScores['strand'] ?? 0)));
 
-        $clusterAlignment = (
-            ($careerPart * 0.50) +
-            ($personalityPart * 0.25) +
-            ($strandPart * 0.25)
-        );
-
         $skillsPart = calculateCourseCompetencyMatch($mysqli, $courseId, $competencyScores);
         if ($skillsPart === null) {
             $skillsPart = (float) ($categoryScores['skills'] ?? 50.0); 
         }
 
         $finalScore = (
-            ($clusterAlignment * 0.35) +
-            ($skillsPart * 0.65)
+            ($careerPart * 0.40) +
+            ($personalityPart * 0.20) +
+            ($strandPart * 0.20) +
+            ($skillsPart * 0.20)
         );
 
         $scoredCourses[] = [
@@ -457,7 +454,6 @@ function calculateCourseScores($mysqli, $assessmentId) {
             'cluster_name' => $course['cluster_name'],
             'match_percentage' => round(min(100, max(0, $finalScore)), 2),
             'breakdown' => [
-                'cluster_alignment' => round($clusterAlignment, 2),
                 'skills_part' => round($skillsPart, 2),
                 'career_part' => round($careerPart, 2),
                 'personality_part' => round($personalityPart, 2),
@@ -477,8 +473,8 @@ function calculateCourseScores($mysqli, $assessmentId) {
 /**
  * Generate a plain-language fallback explanation using aggregate values.
  */
-function generateTemplateExplanation($courseName, $clusterName, $clusterAlignment, $skillsScore, $finalScore) {
-    return "Your overall cluster fit for {$clusterName} is " . round($clusterAlignment) . "%, which reflects your broad career interests, personality, and strand alignment. Your specific competency match for {$courseName} is " . round($skillsScore) . "%. Combining these, your final highly personalized recommendation score is " . round($finalScore) . "%.";
+function generateTemplateExplanation($courseName, $clusterName, $skillsScore, $finalScore) {
+    return "Your overall match for {$courseName} is " . round($finalScore) . "%. This is based on a combination of your Career Interest (40%), Personality & Traits (20%), Strand Alignment (20%), and Course Competency Match (20%).";
 }
 
 /**
@@ -506,8 +502,7 @@ function fetchBatchAIExplanations(array $coursesBatch) {
         foreach ($coursesBatch as $payload) {
             $fallbacks[$payload['courseId']] = generateTemplateExplanation(
                 $payload['courseName'], $payload['clusterName'], 
-                $payload['clusterAlignment'], $payload['skillsScore'],
-                $payload['finalScore']
+                $payload['skillsScore'], $payload['finalScore']
             );
         }
         return $fallbacks;
@@ -517,11 +512,11 @@ function fetchBatchAIExplanations(array $coursesBatch) {
         return $generateFallbacks();
     }
 
-    $systemPrompt = "You are an expert career counselor explaining course recommendations to a student. For each course, write a unique, personalized 2-3 sentence explanation of why this specific course is a good fit. Base your explanation strictly on the provided scores (Cluster Alignment and Competency Match) and the specific nature of the course. The system uses a two-stage model: it first checks broad field fit (Cluster Alignment), then specific course fit using tested skills (Competency Match). Highlight the strongest matching area, but ensure every explanation is distinct, engaging, and directly references the course's domain. Do not include exact percentages in the text. You must output the result strictly as a JSON object matching this schema:\n\n{\n  \"explanations\": [\n    {\n      \"course_id\": 123,\n      \"explanation\": \"...\"\n    }\n  ]\n}";
+    $systemPrompt = "You are an expert career counselor explaining course recommendations to a student. For each course, write a unique, personalized 2-3 sentence explanation of why this specific course is a good fit. Base your explanation on the student's strongest matching areas (Career Interest, Personality, Strand, or Competencies). \n\nCRITICAL RULE: DO NOT include or mention any exact numerical scores, decimals, or percentages (e.g., '31.25', '80%') in your explanation text under any circumstances. Speak holistically about their 'strong aptitude' or 'high interest' instead of quoting numbers.\n\nYou must output the result strictly as a JSON object matching this schema:\n{\n  \"explanations\": [\n    {\n      \"course_id\": 123,\n      \"explanation\": \"...\"\n    }\n  ]\n}";
     
-    $userPrompt = "Here are the top courses for the student:\n\n";
+    $userPrompt = "Here are the top courses for the student (do NOT quote these exact numbers in your response):\n\n";
     foreach ($coursesBatch as $payload) {
-        $userPrompt .= "Course ID: {$payload['courseId']}\nCourse: {$payload['courseName']}\nCluster: {$payload['clusterName']}\nCluster Alignment: {$payload['clusterAlignment']}\nCompetency Match: {$payload['skillsScore']}\nFinal Score: {$payload['finalScore']}\n\n";
+        $userPrompt .= "Course ID: {$payload['courseId']}\nCourse: {$payload['courseName']}\nCluster: {$payload['clusterName']}\nCompetency Match: {$payload['skillsScore']}\nFinal Score: {$payload['finalScore']}\n\n";
     }
 
     $data = [
@@ -654,17 +649,8 @@ function generateScoreExplanation($explanationText, $skillsPct, $careerPct, $per
     $html .= '</button>';
     
     $html .= '<div style="display:none; margin-top:10px; padding:12px; background:rgba(0,0,0,0.2); border-radius:8px; border:1px solid rgba(255,255,255,0.05); font-family:monospace; font-size:0.75rem; color:#94a3b8; line-height:1.7;">';
-    $clusterVal = ($careerPct * 0.50) + ($personPct * 0.25) + ($strandPct * 0.25);
-    $cluster = number_format($clusterVal, 1);
-    
-    $liveFinalPct = ($clusterVal * 0.35) + ($skillsPct * 0.65);
-    $f_live = number_format($liveFinalPct, 1);
-    
-    $html .= '<strong style="color:#f8fafc;">Cluster Alignment (35%):</strong><br>';
-    $html .= "(Career {$c}% &times; 0.50) + (Personality {$p}% &times; 0.25) + (Strand {$st}% &times; 0.25) = <strong style=\"color:#f59e0b;\">{$cluster}%</strong><br><br>";
-    
     $html .= '<strong style="color:#f8fafc;">Final Course Score:</strong><br>';
-    $html .= "(Cluster Alignment {$cluster}% &times; 0.35) + (Skills {$sk}% &times; 0.65) = <strong style=\"color:#f59e0b;\">{$f}%</strong>";
+    $html .= "(Career Interest {$c}% &times; 0.40) + (Personality & Traits {$p}% &times; 0.20) + (Strand Alignment {$st}% &times; 0.20) + (Course Competency Match {$sk}% &times; 0.20) = <strong style=\"color:#f59e0b;\">{$f}%</strong>";
     
     $html .= '</div>';
     $html .= '</div>';
@@ -757,7 +743,11 @@ function getRecommendedSchools($courseId, $selectedRegion) {
             'status' => 'no_schools',
             'message' => "No schools are currently listed as offering this course in our system. \nWe recommend asking your school counselor directly about available options.",
             'top_schools' => [],
-            'all_schools' => []
+            'all_schools' => [],
+            'in_district_schools' => [],
+            'alternative_schools' => [],
+            'has_region' => false,
+            'selected_region' => $selectedRegion
         ];
     }
 
@@ -899,8 +889,25 @@ function generateRecommendations($mysqli, $assessmentId, $selectedRegion = null,
         return;
     }
 
-    // Keep the top 5 courses
-    $topCourses = array_slice($scoredCourses, 0, 5);
+    // Keep the top 5 courses, allowing a maximum of 2 courses per cluster for diversity
+    $topCourses = [];
+    $clusterCounts = [];
+    
+    foreach ($scoredCourses as $course) {
+        if (count($topCourses) >= 5) {
+            break;
+        }
+        
+        $clusterId = $course['cluster_id'];
+        if (!isset($clusterCounts[$clusterId])) {
+            $clusterCounts[$clusterId] = 0;
+        }
+        
+        if ($clusterCounts[$clusterId] < 2) {
+            $topCourses[] = $course;
+            $clusterCounts[$clusterId]++;
+        }
+    }
 
     // Step 3: Persist ranked recommendations with real calculated percentages
     // Build batch payload for Gemini and reuse valid existing explanations
@@ -918,7 +925,6 @@ function generateRecommendations($mysqli, $assessmentId, $selectedRegion = null,
                 'courseId' => $courseId,
                 'courseName' => $course['course_name'],
                 'clusterName' => $course['cluster_name'],
-                'clusterAlignment' => $breakdown['cluster_alignment'] ?? 50.0,
                 'careerScore' => $breakdown['career_part'] ?? 50.0,
                 'personalityScore' => $breakdown['personality_part'] ?? 50.0,
                 'strandScore' => $breakdown['strand_part'] ?? 50.0,

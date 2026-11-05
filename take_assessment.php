@@ -19,23 +19,45 @@ if (!empty($student['is_readonly'])) {
 // Assessment Limit: Maximum 2 assessments allowed
 $MAX_ASSESSMENTS = 2;
 
+// Auto-expire abandoned assessments (24 hours timeout)
+$expireStmt = $mysqli->prepare("
+    UPDATE student_assessments 
+    SET status = 'abandoned' 
+    WHERE status = 'in_progress' 
+      AND (
+          (expires_at IS NOT NULL AND expires_at < NOW())
+          OR 
+          (expires_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR))
+      )
+");
+if ($expireStmt) {
+    $expireStmt->execute();
+    $expireStmt->close();
+}
+
+
 // Get current school year safely
 $yearResult = $mysqli->query("SELECT id FROM school_years WHERE is_current = 1 LIMIT 1");
 $yearRow = $yearResult ? $yearResult->fetch_assoc() : null;
 $schoolYearId = $yearRow ? (int)$yearRow['id'] : 1;
 
-// Fetch saved preferred region for the current school year
+// Fetch saved preferred region and medical declaration for the current school year
 $savedPreferredRegion = null;
+$savedMedicalDeclaration = null;
 if ($studentId > 0) {
-    $stmt = $mysqli->prepare("SELECT preferred_region FROM student_assessments WHERE student_id = ? AND school_year_id = ? AND preferred_region IS NOT NULL LIMIT 1");
+    $stmt = $mysqli->prepare("SELECT preferred_region, medical_declaration FROM student_assessments WHERE student_id = ? AND school_year_id = ? AND status = 'in_progress' AND preferred_region IS NOT NULL LIMIT 1");
     if ($stmt) {
         $stmt->bind_param("ii", $studentId, $schoolYearId);
         $stmt->execute();
         $res = $stmt->get_result()->fetch_assoc();
         $savedPreferredRegion = $res['preferred_region'] ?? null;
+        if (!empty($res['medical_declaration'])) {
+            $savedMedicalDeclaration = json_decode($res['medical_declaration'], true);
+        }
         $stmt->close();
     }
 }
+
 
 // Check how many assessments student has completed for the current school year
 $completedCount = 0;
@@ -68,8 +90,8 @@ $gradeLevelNum = $gradeLevelStr === 'Grade 11' ? 11 : 12;
 $stmtCount = $mysqli->prepare("
     SELECT COUNT(*) as count 
     FROM questions_strand qs
-    JOIN strands s ON qs.strand_id = s.id
-    WHERE qs.is_active = 1 AND s.grade_level = ?
+    LEFT JOIN strands s ON qs.strand_id = s.id
+    WHERE qs.is_active = 1 AND (s.grade_level = ? OR qs.strand_id IS NULL)
 ");
 $stmtCount->bind_param("i", $gradeLevelNum);
 $stmtCount->execute();
@@ -124,7 +146,59 @@ $questionSeed = ($studentId * 10) + $completedCount;
 
 // Fetch questions for each category (capped at 20 questions per category)
 $careerQuestions = fetchQuestions($mysqli, 'questions_career', 20, $questionSeed);
-$personalityQuestions = fetchQuestions($mysqli, 'questions_personality', 20, $questionSeed);
+
+// Fetch exactly 19 Likert questions and 1 Open-ended question for Personality
+$personalityLikert = [];
+$personalityOpenEnded = [];
+$traits = ['Openness', 'Conscientiousness', 'Extraversion', 'Agreeableness', 'Neuroticism'];
+
+// 1. Fetch 1 Open-ended question deterministically
+$stmtOpen = $mysqli->prepare("
+    SELECT * FROM questions_personality 
+    WHERE is_active = 1 AND question_type = 'open-ended' 
+    ORDER BY RAND(?) LIMIT 1
+");
+if ($stmtOpen) {
+    $stmtOpen->bind_param('i', $questionSeed);
+    $stmtOpen->execute();
+    if ($resOpen = $stmtOpen->get_result()) {
+        if ($row = $resOpen->fetch_assoc()) {
+            $personalityOpenEnded[] = $row;
+        }
+    }
+    $stmtOpen->close();
+}
+
+// 2. Fetch Likert questions. To get exactly 19, one trait gets 3, others get 4.
+$traitWithThree = $questionSeed % 5;
+
+foreach ($traits as $index => $trait) {
+    $limit = ($index === $traitWithThree) ? 3 : 4;
+    $traitSeed = $questionSeed + $index;
+    $stmtTrait = $mysqli->prepare("
+        SELECT * FROM questions_personality 
+        WHERE is_active = 1 AND question_type = 'likert' AND trait = ? 
+        ORDER BY RAND(?) LIMIT ?
+    ");
+    if ($stmtTrait) {
+        $stmtTrait->bind_param('sii', $trait, $traitSeed, $limit);
+        $stmtTrait->execute();
+        $resTrait = $stmtTrait->get_result();
+        while ($row = $resTrait->fetch_assoc()) {
+            $personalityLikert[] = $row;
+        }
+        $stmtTrait->close();
+    }
+}
+// Shuffle Likert questions so they aren't grouped by trait, keeping open-ended at the end
+// Use the same seed to ensure deterministic shuffling
+mt_srand($questionSeed);
+shuffle($personalityLikert);
+mt_srand(); // Reset to avoid affecting other rand calls
+
+// Always place open-ended question last
+$personalityQuestions = array_merge($personalityLikert, $personalityOpenEnded);
+
 $skillsQuestions = fetchQuestions($mysqli, 'questions_skills', 20, $questionSeed);
 
 // Strand questions depend on Grade Level
@@ -136,8 +210,8 @@ $nonOpenEndedStrand = [];
 $stmtOpen = $mysqli->prepare("
     SELECT qs.* 
     FROM questions_strand qs
-    JOIN strands s ON qs.strand_id = s.id
-    WHERE qs.is_active = 1 AND qs.question_type = 'open-ended' AND s.grade_level = ?
+    LEFT JOIN strands s ON qs.strand_id = s.id
+    WHERE qs.is_active = 1 AND qs.question_type = 'open-ended' AND (s.grade_level = ? OR qs.strand_id IS NULL)
     ORDER BY RAND(?) LIMIT 1
 ");
 $stmtOpen->bind_param("ii", $gradeLevelNum, $questionSeed);
@@ -190,9 +264,7 @@ function buildQuestionArray($questions, $category, $optionsMap = []) {
         if (($category === 'career' || $category === 'strand') && !empty($q['strand_id'])) {
             $item['strand_id'] = (int) $q['strand_id'];
         }
-        if ($category === 'skills' && !empty($q['skill_category_id'])) {
-            $item['skill_category_id'] = (int) $q['skill_category_id'];
-        }
+
         if ($category === 'skills' && !empty($q['competency_id'])) {
             $item['competency_id'] = (int) $q['competency_id'];
         }
@@ -220,6 +292,133 @@ $jsCareerQuestions = buildQuestionArray($careerQuestions, 'career');
 $jsPersonalityQuestions = buildQuestionArray($personalityQuestions, 'personality');
 $jsSkillsQuestions = buildQuestionArray($skillsQuestions, 'skills', $skillsOptionsMap);
 $jsStrandQuestions = buildQuestionArray($strandQuestions, 'strand', $strandOptionsMap);
+
+// Retrieve active in-progress assessment from MySQL for cross-device/cross-browser seamless resumption
+$activeAssessment = null;
+$activeAssessmentAnswers = [];
+$activeAssessmentData = null;
+
+if ($studentId > 0 && !$hasReachedLimit) {
+    $activeStmt = $mysqli->prepare("
+        SELECT id, region, preferred_region, medical_declaration, created_at, started_at, expires_at 
+        FROM student_assessments 
+        WHERE student_id = ? 
+          AND school_year_id = ? 
+          AND status = 'in_progress' 
+          AND (expires_at IS NULL OR expires_at > NOW())
+        ORDER BY id DESC 
+        LIMIT 1
+    ");
+    if ($activeStmt) {
+        $activeStmt->bind_param("ii", $studentId, $schoolYearId);
+        $activeStmt->execute();
+        $activeAssessment = $activeStmt->get_result()->fetch_assoc();
+        $activeStmt->close();
+    }
+
+    if ($activeAssessment) {
+        $ansStmt = $mysqli->prepare("
+            SELECT question_type, question_id, selected_option_id, likert_value, open_answer 
+            FROM student_answers 
+            WHERE assessment_id = ?
+        ");
+        if ($ansStmt) {
+            $ansStmt->bind_param("i", $activeAssessment['id']);
+            $ansStmt->execute();
+            $ansRes = $ansStmt->get_result();
+            while ($ansRow = $ansRes->fetch_assoc()) {
+                $qType = $ansRow['question_type'];
+                $qId = (int)$ansRow['question_id'];
+                $val = null;
+
+                if ($ansRow['likert_value'] !== null) {
+                    $val = (string)$ansRow['likert_value'];
+                } elseif ($ansRow['selected_option_id'] !== null) {
+                    $optId = (int)$ansRow['selected_option_id'];
+                    $optMap = ($qType === 'skills') ? $skillsOptionsMap : (($qType === 'strand') ? $strandOptionsMap : []);
+                    if (isset($optMap[$qId])) {
+                        foreach ($optMap[$qId] as $opt) {
+                            if ((int)$opt['id'] === $optId) {
+                                $val = $opt['option_text'];
+                                break;
+                            }
+                        }
+                    }
+                    if ($val === null) {
+                        $val = (string)$optId;
+                    }
+                } elseif ($ansRow['open_answer'] !== null && $ansRow['open_answer'] !== '') {
+                    $decoded = json_decode($ansRow['open_answer'], true);
+                    if (is_array($decoded) && isset($decoded['option_id'])) {
+                        $optId = (int)$decoded['option_id'];
+                        $optMap = ($qType === 'skills') ? $skillsOptionsMap : (($qType === 'strand') ? $strandOptionsMap : []);
+                        if (isset($optMap[$qId])) {
+                            foreach ($optMap[$qId] as $opt) {
+                                if ((int)$opt['id'] === $optId) {
+                                    $val = $opt['option_text'];
+                                    break;
+                                }
+                            }
+                        }
+                        if ($val === null) {
+                            $val = (string)$optId;
+                        }
+                    } else {
+                        $val = $ansRow['open_answer'];
+                    }
+                }
+
+                if ($val !== null) {
+                    $activeAssessmentAnswers[$qType . '_' . $qId] = $val;
+                }
+            }
+            $ansStmt->close();
+        }
+
+        // Determine which category and question to resume
+        $assessmentSequence = ['career', 'personality', 'skills', 'strand'];
+        $allQuestionsByCategory = [
+            'career' => $jsCareerQuestions,
+            'personality' => $jsPersonalityQuestions,
+            'skills' => $jsSkillsQuestions,
+            'strand' => $jsStrandQuestions
+        ];
+
+        $resumeCategoryIndex = 0;
+        $resumeQuestionIndex = 0;
+        $foundUnanswered = false;
+
+        foreach ($assessmentSequence as $catIdx => $catName) {
+            $qList = $allQuestionsByCategory[$catName] ?? [];
+            foreach ($qList as $qIdx => $q) {
+                $qKey = $catName . '_' . $q['id'];
+                if (!isset($activeAssessmentAnswers[$qKey])) {
+                    $resumeCategoryIndex = $catIdx;
+                    $resumeQuestionIndex = $qIdx;
+                    $foundUnanswered = true;
+                    break 2;
+                }
+            }
+        }
+
+        if (!$foundUnanswered) {
+            $resumeCategoryIndex = count($assessmentSequence) - 1;
+            $lastCat = $assessmentSequence[$resumeCategoryIndex];
+            $resumeQuestionIndex = max(0, count($allQuestionsByCategory[$lastCat] ?? []) - 1);
+        }
+
+        $activeAssessmentData = [
+            'assessmentId' => (int)$activeAssessment['id'],
+            'region' => $activeAssessment['region'] ?: ($activeAssessment['preferred_region'] ?: 'All'),
+            'currentAssessmentIndex' => $resumeCategoryIndex,
+            'type' => $assessmentSequence[$resumeCategoryIndex],
+            'currentQuestion' => $resumeQuestionIndex,
+            'answers' => (object)$activeAssessmentAnswers,
+            'savedAt' => $activeAssessment['created_at'],
+            'medicalDeclaration' => !empty($activeAssessment['medical_declaration']) ? json_decode($activeAssessment['medical_declaration'], true) : null,
+        ];
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -325,6 +524,28 @@ $jsStrandQuestions = buildQuestionArray($strandQuestions, 'strand', $strandOptio
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
         }
+        .modal-medical-option-label {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            cursor: pointer;
+            color: #cbd5e1;
+            font-size: 0.93rem;
+            padding: 0.35rem 0.5rem;
+            border-radius: 8px;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+        .modal-medical-option-label:hover {
+            background: rgba(255, 255, 255, 0.04);
+            color: #f1f5f9;
+        }
+        .modal-medical-option-label input[type="checkbox"] {
+            accent-color: #f59e0b;
+            width: 1.15rem;
+            height: 1.15rem;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
@@ -418,81 +639,76 @@ $jsStrandQuestions = buildQuestionArray($strandQuestions, 'strand', $strandOptio
                 </div>
 
                 <!-- Assessment Type Selection -->
-                <div class="assessment-type-selection" id="assessmentTypeSelection">
+                <div class="assessment-type-selection" id="assessmentTypeSelection" <?php echo !empty($activeAssessmentData) ? 'style="display: none;"' : ''; ?>>
                     <div class="selection-header">
-                        <h2><?php echo $hasReachedLimit ? 'Assessment Limit Reached' : 'Choose Assessment Type'; ?></h2>
-                        <p><?php echo $hasReachedLimit ? 'You have completed the maximum allowed assessments. View your results below.' : 'Select the type of assessment you\'d like to take'; ?></p>
+                        <h2><?php echo $hasReachedLimit ? 'Assessment Limit Reached' : 'Career Assessment'; ?></h2>
+                        <p><?php echo $hasReachedLimit ? 'You have completed the maximum allowed assessments. View your results below.' : 'Complete the following four assessment categories'; ?></p>
                     </div>
                     <div class="assessment-types">
-                        <div class="assessment-type-card <?php echo ($hasReachedLimit || $careerCount === 0) ? 'disabled' : ''; ?>" data-type="career">
+                        <div class="assessment-type-card <?php echo ($hasReachedLimit || $careerCount === 0) ? 'disabled' : ''; ?>">
                             <?php if ($hasReachedLimit): ?><span class="limit-badge">Limit Reached</span><?php endif; ?>
                             <div class="type-icon">
                                 <i class="fa-solid fa-briefcase"></i>
                             </div>
-                            <h3>Career Assessment</h3>
-                            <p>Discover career paths that match your interests and skills</p>
-                            <span class="question-count"><?php echo $careerCount; ?> questions available</span>
-                            <button class="start-assessment-btn" data-type="career" <?php echo ($hasReachedLimit || $careerCount === 0) ? 'disabled' : ''; ?>>
-                                <?php 
-                                if ($hasReachedLimit) echo 'Limit Reached';
-                                elseif ($careerCount === 0) echo 'No Questions';
-                                else echo 'Start Assessment';
-                                ?>
-                            </button>
+                            <div class="type-info">
+                                <div class="type-title-row">
+                                    <h3>Career Interest Assessment</h3>
+                                    <span class="question-count">20 questions</span>
+                                </div>
+                                <p>Based on the Holland RIASEC model</p>
+                            </div>
                         </div>
-                        <div class="assessment-type-card <?php echo ($hasReachedLimit || $personalityCount === 0) ? 'disabled' : ''; ?>" data-type="personality">
+                        <div class="assessment-type-card <?php echo ($hasReachedLimit || $personalityCount === 0) ? 'disabled' : ''; ?>">
                             <?php if ($hasReachedLimit): ?><span class="limit-badge">Limit Reached</span><?php endif; ?>
                             <div class="type-icon">
                                 <i class="fa-solid fa-user-circle"></i>
                             </div>
-                            <h3>Personality Assessment</h3>
-                            <p>Understand your personality traits and work preferences</p>
-                            <span class="question-count"><?php echo $personalityCount; ?> questions available</span>
-                            <button class="start-assessment-btn" data-type="personality" <?php echo ($hasReachedLimit || $personalityCount === 0) ? 'disabled' : ''; ?>>
-                                <?php 
-                                if ($hasReachedLimit) echo 'Limit Reached';
-                                elseif ($personalityCount === 0) echo 'No Questions';
-                                else echo 'Start Assessment';
-                                ?>
-                            </button>
+                            <div class="type-info">
+                                <div class="type-title-row">
+                                    <h3>Personality Assessment</h3>
+                                    <span class="question-count">20 questions</span>
+                                </div>
+                                <p>Measures personality traits</p>
+                            </div>
                         </div>
-                        <div class="assessment-type-card <?php echo ($hasReachedLimit || $skillsCount === 0) ? 'disabled' : ''; ?>" data-type="skills">
+                        <div class="assessment-type-card <?php echo ($hasReachedLimit || $skillsCount === 0) ? 'disabled' : ''; ?>">
                             <?php if ($hasReachedLimit): ?><span class="limit-badge">Limit Reached</span><?php endif; ?>
                             <div class="type-icon">
                                 <i class="fa-solid fa-tools"></i>
                             </div>
-                            <h3>Skills Assessment</h3>
-                            <p>Evaluate your current skills and identify areas for improvement</p>
-                            <span class="question-count"><?php echo $skillsCount; ?> questions available</span>
-                            <button class="start-assessment-btn" data-type="skills" <?php echo ($hasReachedLimit || $skillsCount === 0) ? 'disabled' : ''; ?>>
-                                <?php 
-                                if ($hasReachedLimit) echo 'Limit Reached';
-                                elseif ($skillsCount === 0) echo 'No Questions';
-                                else echo 'Start Assessment';
-                                ?>
-                            </button>
+                            <div class="type-info">
+                                <div class="type-title-row">
+                                    <h3>Skills Assessment</h3>
+                                    <span class="question-count">20 questions</span>
+                                </div>
+                                <p>Assesses skills and abilities</p>
+                            </div>
                         </div>
-                        <div class="assessment-type-card <?php echo ($hasReachedLimit || $strandCount === 0) ? 'disabled' : ''; ?>" data-type="strand">
+                        <div class="assessment-type-card <?php echo ($hasReachedLimit || $strandCount === 0) ? 'disabled' : ''; ?>">
                             <?php if ($hasReachedLimit): ?><span class="limit-badge">Limit Reached</span><?php endif; ?>
                             <div class="type-icon">
                                 <i class="fa-solid fa-school"></i>
                             </div>
-                            <h3>Strand Assessment</h3>
-                            <p>Find the best academic strand for your senior high school</p>
-                            <span class="question-count"><?php echo $strandCount; ?> questions available</span>
-                            <button class="start-assessment-btn" data-type="strand" <?php echo ($hasReachedLimit || $strandCount === 0) ? 'disabled' : ''; ?>>
-                                <?php 
-                                if ($hasReachedLimit) echo 'Limit Reached';
-                                elseif ($strandCount === 0) echo 'No Questions';
-                                else echo 'Start Assessment';
-                                ?>
-                            </button>
+                            <div class="type-info">
+                                <div class="type-title-row">
+                                    <h3>Strand Assessment</h3>
+                                    <span class="question-count">20 questions</span>
+                                </div>
+                                <p>Assesses strand-related aptitude</p>
+                            </div>
                         </div>
                     </div>
+                    
+                    <div class="assessment-notice" style="text-align: center; margin-top: 1.25rem; color: #94a3b8; font-size: 0.88rem; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.18); border-radius: 10px; padding: 0.65rem 1rem; display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                        <i class="fa-solid fa-circle-info" style="color: #60a5fa; font-size: 0.95rem; flex-shrink: 0;"></i>
+                        <span>All four assessment categories are required to generate your complete assessment results and course recommendations.</span>
+                    </div>
+
+                    <div id="regionSelectionContainer" style="margin-top: 1.5rem;"></div>
                 </div>
 
                 <!-- Assessment Questions -->
-                <div class="assessment-questions" id="assessmentQuestions" style="display: none;">
+                <div class="assessment-questions" id="assessmentQuestions" <?php echo !empty($activeAssessmentData) ? 'style="display: block;"' : 'style="display: none;"'; ?>>
 
 
                     <!-- Question Card -->
@@ -545,6 +761,83 @@ $jsStrandQuestions = buildQuestionArray($strandQuestions, 'strand', $strandOptio
                     </div>
                 </div>
             </div>
+
+            <!-- Pre-Assessment Medical & Physical Considerations Modal -->
+            <div class="modal" id="medicalDeclarationModal" tabindex="-1" role="dialog" aria-labelledby="medModalTitle" aria-hidden="true">
+                <div class="modal-overlay" id="medicalModalOverlay"></div>
+                <div class="modal-content" style="max-width: 620px; border: 1px solid rgba(245, 158, 11, 0.25); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);">
+                    <div class="modal-header" style="border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding: 1.25rem 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <div style="background: rgba(239, 68, 68, 0.12); color: #ef4444; width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.25rem; flex-shrink: 0;">
+                                <i class="fa-solid fa-notes-medical"></i>
+                            </div>
+                            <div>
+                                <h3 id="medModalTitle" style="font-size: 1.25rem; font-weight: 700; color: #f1f5f9; margin: 0; line-height: 1.3;">Medical &amp; Physical Considerations</h3>
+                                <p style="font-size: 0.8rem; color: #94a3b8; margin: 0.2rem 0 0 0;">Pre-assessment declaration for career guidance</p>
+                            </div>
+                        </div>
+                        <button type="button" class="modal-close" id="closeMedicalModalBtn" aria-label="Close modal" style="background: none; border: none; color: #94a3b8; font-size: 1.5rem; cursor: pointer; padding: 0.25rem 0.5rem; line-height: 1;">&times;</button>
+                    </div>
+                    
+                    <div class="modal-body" style="padding: 1.5rem; overflow-y: auto; max-height: calc(85vh - 140px);">
+                        <p style="color: #94a3b8; font-size: 0.92rem; line-height: 1.6; margin-bottom: 1.25rem;">
+                            This section is for career-guidance purposes only. It does not determine medical fitness or diagnose any condition. Some courses and careers may have specific medical, vision, hearing, or physical requirements.
+                        </p>
+
+                        <div style="background: rgba(30, 41, 59, 0.55); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem;">
+                            <p style="font-weight: 600; color: #f1f5f9; margin-bottom: 1rem; font-size: 0.95rem;">
+                                Which of the following health or physical considerations may apply to you?
+                            </p>
+                            <div class="modal-medical-options" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                                <label class="modal-medical-option-label">
+                                    <input type="checkbox" name="modal_med_consideration" value="color_perception">
+                                    <span>Difficulty distinguishing certain colors</span>
+                                </label>
+                                <label class="modal-medical-option-label">
+                                    <input type="checkbox" name="modal_med_consideration" value="vision">
+                                    <span>Difficulty seeing clearly</span>
+                                </label>
+                                <label class="modal-medical-option-label">
+                                    <input type="checkbox" name="modal_med_consideration" value="hearing">
+                                    <span>Difficulty hearing</span>
+                                </label>
+                                <label class="modal-medical-option-label">
+                                    <input type="checkbox" name="modal_med_consideration" value="physical_limitation">
+                                    <span>Physical condition that limits strenuous activity</span>
+                                </label>
+                                <label class="modal-medical-option-label">
+                                    <input type="checkbox" name="modal_med_consideration" value="other" id="modalMedOtherCheckbox">
+                                    <span>Other health or physical consideration</span>
+                                </label>
+
+                                <div id="modalMedOtherDescContainer" style="display: none; margin-top: 0.25rem; margin-left: 2rem;">
+                                    <label for="modalMedOtherDesc" style="display: block; color: #94a3b8; font-size: 0.82rem; margin-bottom: 0.35rem;">Please briefly describe the consideration:</label>
+                                    <input type="text" id="modalMedOtherDesc" maxlength="255" placeholder="e.g., Asthma, mobility assistance, etc." style="width: 100%; padding: 0.65rem 0.85rem; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; color: #f1f5f9; font-size: 0.9rem;">
+                                </div>
+
+                                <label class="modal-medical-option-label" style="margin-top: 0.5rem; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 0.85rem;">
+                                    <input type="checkbox" name="modal_med_consideration" value="none" id="modalMedNoneCheckbox">
+                                    <span>None of the above</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div style="background: rgba(245, 158, 11, 0.06); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 12px; padding: 1.15rem;">
+                            <label style="display: flex; gap: 0.85rem; cursor: pointer; align-items: flex-start;">
+                                <input type="checkbox" id="modalMedAckCheckbox" style="margin-top: 0.2rem; accent-color: #f59e0b; width: 1.15rem; height: 1.15rem; flex-shrink: 0; cursor: pointer;">
+                                <span style="font-size: 0.85rem; color: #cbd5e1; line-height: 1.55;">
+                                    I understand that my answers are for career-guidance purposes only and do not determine whether I am medically qualified for any course, training program, license, or career. I understand that I may need to consult my Guidance Counselor and an appropriate medical professional regarding specific requirements.
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer" style="border-top: 1px solid rgba(255, 255, 255, 0.08); padding: 1rem 1.5rem; display: flex; justify-content: flex-end; gap: 0.75rem; background: rgba(15, 23, 42, 0.4);">
+                        <button type="button" id="cancelMedicalModalBtn" style="background: rgba(255, 255, 255, 0.06); color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.12); padding: 0.65rem 1.25rem; border-radius: 8px; font-weight: 600; cursor: pointer; transition: all 0.2s;">Cancel</button>
+                        <button type="button" id="confirmMedicalModalBtn" disabled style="background: #f59e0b; color: #0f172a; border: none; padding: 0.65rem 1.4rem; border-radius: 8px; font-weight: 700; cursor: not-allowed; opacity: 0.5; transition: all 0.2s;">Save &amp; Continue</button>
+                    </div>
+                </div>
+            </div>
         <?php include 'includes/app_footer.php'; ?>
         </main>
     </div>
@@ -553,6 +846,8 @@ $jsStrandQuestions = buildQuestionArray($strandQuestions, 'strand', $strandOptio
         // Student ID for API calls
         window.studentId = <?php echo (int)$studentId; ?>;
         window.savedPreferredRegion = <?php echo json_encode($savedPreferredRegion); ?>;
+        window.savedMedicalDeclaration = <?php echo json_encode($savedMedicalDeclaration); ?>;
+        window.serverActiveAssessment = <?php echo json_encode($activeAssessmentData); ?>;
         
         // Dynamic assessment questions from database (20 questions per category, up to 80 total)
         window.assessmentQuestionsFromDB = {
@@ -597,7 +892,7 @@ $jsStrandQuestions = buildQuestionArray($strandQuestions, 'strand', $strandOptio
         });
         
         // Start assessment on server
-        window.startAssessmentOnServer = async function(type, region) {
+        window.startAssessmentOnServer = async function(type, region, medicalDeclaration) {
             if (!window.studentId) {
                 alert('You must be logged in to start an assessment');
                 return null;
@@ -610,6 +905,10 @@ $jsStrandQuestions = buildQuestionArray($strandQuestions, 'strand', $strandOptio
                 formData.append('type', type);
                 formData.append('region', region || '');
                 formData.append('preferred_region', region || '');
+                
+                if (medicalDeclaration) {
+                    formData.append('medical_declaration', JSON.stringify(medicalDeclaration));
+                }
                 
                 const response = await fetch('api/assessment.php', {
                     method: 'POST',

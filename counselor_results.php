@@ -172,7 +172,7 @@ $result = $mysqli->query("
     LEFT JOIN students s  ON sa.student_id = s.id
     LEFT JOIN strands  st ON s.strand_id   = st.id
     WHERE sa.status IN ('completed','abandoned')
-    ORDER BY sa.created_at DESC
+    ORDER BY s.last_name ASC, s.first_name ASC, sa.created_at DESC
     LIMIT 100
 ");
 
@@ -1332,6 +1332,19 @@ $userName = isset($_SESSION['counselor_id']) ? $_SESSION['counselor_name'] : $_S
                 const answersBtn = document.getElementById('detailViewAnswersBtn');
                 if (answersBtn) {
                     answersBtn.href = 'counselor_answers.php?student_id=' + (studentId || assessment.student_id);
+                    answersBtn.style.display = 'inline-flex';
+                }
+
+                // Update Review & Verify Button URL
+                const reviewBtn = document.getElementById('detailReviewBtn');
+                if (reviewBtn) {
+                    const targetAssId = assessment.id || assessmentId;
+                    if (targetAssId && !isArchived) {
+                        reviewBtn.href = 'counselor_review.php?id=' + targetAssId;
+                        reviewBtn.style.display = 'inline-flex';
+                    } else {
+                        reviewBtn.style.display = 'none';
+                    }
                 }
 
                 viewDetailsModal.classList.add('active');

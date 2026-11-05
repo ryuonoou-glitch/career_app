@@ -172,11 +172,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
         case 'search_results':
             $query        = trim($_POST['query'] ?? '');
-            $statusFilter = trim($_POST['status_filter'] ?? 'active');
             $reqYearId    = (int)($_POST['school_year_id'] ?? $activeYearId);
             $assmntStatus = trim($_POST['assessment_status'] ?? 'all');
+            $gradeFilter  = trim($_POST['grade_filter'] ?? 'all');
+            $strandFilter = trim($_POST['strand_filter'] ?? 'all');
             $rows         = [];
             $searchLike   = '%' . $query . '%';
+            
+            $extraArchivedCondition = "";
+            $extraActiveCondition = "";
+            
+            if ($gradeFilter !== 'all') {
+                $safeGrade = $mysqli->real_escape_string($gradeFilter);
+                $extraArchivedCondition .= " AND s.grade_level = '$safeGrade'";
+                $extraActiveCondition .= " AND s.grade_level = '$safeGrade'";
+            }
+            if ($strandFilter !== 'all') {
+                $safeStrand = (int)$strandFilter;
+                $extraArchivedCondition .= " AND s.strand_id = $safeStrand";
+                $extraActiveCondition .= " AND s.strand_id = $safeStrand";
+            }
             
             if ($reqYearId !== $activeYearId) {
                 // If they specifically ask for abandoned, we just return empty array immediately
@@ -207,10 +222,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     LEFT JOIN students s ON aa.student_id = s.id
                     LEFT JOIN strands st ON s.strand_id = st.id
                     WHERE aa.school_year_id = ?
+                      $extraArchivedCondition
                       AND (CONCAT(s.first_name, ' ', s.last_name) LIKE ?
                            OR CONCAT(s.first_name, ' ', s.middle_name, ' ', s.last_name) LIKE ?
                            OR s.student_id LIKE ?)
-                    ORDER BY aa.archived_at DESC
+                    ORDER BY s.first_name ASC, s.last_name ASC, aa.archived_at DESC
                     LIMIT 100
                 ");
                 $aStmt->bind_param('isss', $reqYearId, $searchLike, $searchLike, $searchLike);
@@ -273,11 +289,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
 
             $statusCondition = "AND s.status = 'active'";
-            if ($statusFilter === 'graduated') {
-                $statusCondition = "AND s.status = 'graduated'";
-            } elseif ($statusFilter === 'all') {
-                $statusCondition = "AND s.status IN ('active', 'graduated')";
-            }
 
             $assmntCondition = "sa.status IN ('completed','abandoned')";
             if ($assmntStatus === 'completed') {
@@ -318,11 +329,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 LEFT JOIN strands  st ON s.strand_id   = st.id
                 WHERE $assmntCondition
                   $statusCondition
+                  $extraActiveCondition
                   AND (CONCAT(s.first_name, ' ', s.last_name) LIKE ?
                        OR CONCAT(s.first_name, ' ', s.middle_name, ' ', s.last_name) LIKE ?
                        OR s.student_id LIKE ?
                        OR EXISTS (SELECT 1 FROM valid_student_ids v WHERE v.registered_student_id = s.id AND v.student_id LIKE ?))
-                ORDER BY sa.created_at DESC
+                ORDER BY s.first_name ASC, s.last_name ASC, sa.created_at DESC
                 LIMIT 100
             ");
             $sStmt->bind_param('ssss', $searchLike, $searchLike, $searchLike, $searchLike);
@@ -404,7 +416,7 @@ $result = $mysqli->query("
     LEFT JOIN strands  st ON s.strand_id   = st.id
     WHERE sa.status IN ('completed','abandoned')
       AND s.status = 'active'
-    ORDER BY sa.created_at DESC
+    ORDER BY s.first_name ASC, s.last_name ASC, sa.created_at DESC
     LIMIT 100
 ");
 if ($result) {
@@ -1093,10 +1105,22 @@ foreach ($strandCounts as $strand => $count) {
                             <option value="completed">Completed Only</option>
                             <option value="abandoned">Abandoned Only</option>
                         </select>
-                        <select id="statusFilter" class="filter-select">
-                            <option value="active" selected>Active Enrolled</option>
-                            <option value="graduated">Graduated Alumni</option>
-                            <option value="all">All Students</option>
+
+                        <select id="gradeFilter" class="filter-select">
+                            <option value="all" selected>All Grades</option>
+                            <option value="Grade 11">Grade 11</option>
+                            <option value="Grade 12">Grade 12</option>
+                        </select>
+                        <select id="strandFilter" class="filter-select">
+                            <option value="all" selected>All Strands</option>
+                            <?php 
+                                $strandRes = $mysqli->query("SELECT id, code, name FROM strands WHERE code IN ('ACADPRO', 'STEM', 'acadpro', 'stem') ORDER BY code ASC");
+                                if ($strandRes) {
+                                    while ($st = $strandRes->fetch_assoc()) {
+                                        echo '<option value="' . $st['id'] . '">' . htmlspecialchars($st['code']) . '</option>';
+                                    }
+                                }
+                            ?>
                         </select>
                         <div class="search-actions">
                             <button class="btn-primary" id="searchBtn">
@@ -1427,6 +1451,26 @@ foreach ($strandCounts as $strand => $count) {
                                     coursesWrap.innerHTML = '<p style="color:#64748b; font-size:0.875rem; padding: 0.5rem 0;">No specific program recommendations generated yet.</p>';
                                 }
                                 
+                                const answersBtn = document.getElementById('detailViewAnswersBtn');
+                                if (answersBtn) {
+                                    if (assessment && assessment.student_id) {
+                                        answersBtn.href = 'admin-assessments.php?student_id=' + assessment.student_id;
+                                        answersBtn.style.display = 'inline-flex';
+                                    } else {
+                                        answersBtn.style.display = 'none';
+                                    }
+                                }
+
+                                const reviewBtn = document.getElementById('detailReviewBtn');
+                                if (reviewBtn) {
+                                    if (assessment && assessment.id && !isArchived) {
+                                        reviewBtn.href = 'counselor_review.php?id=' + assessment.id;
+                                        reviewBtn.style.display = 'inline-flex';
+                                    } else {
+                                        reviewBtn.style.display = 'none';
+                                    }
+                                }
+
                                 viewDetailsModal.classList.add('active');
                             } else {
                                 alert(data.message || 'Failed to load assessment details');
@@ -1504,18 +1548,20 @@ foreach ($strandCounts as $strand => $count) {
 
             async function doSearch() {
                 const query = (searchStudent.value || '').trim();
-                const statusVal = document.getElementById('statusFilter')?.value || 'active';
                 const syVal = document.getElementById('schoolYearFilter')?.value || '';
                 const assmntStatusVal = document.getElementById('assessmentStatusFilter')?.value || 'all';
+                const gradeVal = document.getElementById('gradeFilter')?.value || 'all';
+                const strandVal = document.getElementById('strandFilter')?.value || 'all';
                 searchBtn.disabled = true;
                 searchBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Searching...';
                 try {
                     const fd = new FormData();
                     fd.append('action', 'search_results');
                     fd.append('query', query);
-                    fd.append('status_filter', statusVal);
                     fd.append('school_year_id', syVal);
                     fd.append('assessment_status', assmntStatusVal);
+                    fd.append('grade_filter', gradeVal);
+                    fd.append('strand_filter', strandVal);
                     const data = await apiPost(fd);
                     if (data.success) {
                         renderRows(data.rows);
@@ -1530,12 +1576,16 @@ foreach ($strandCounts as $strand => $count) {
                 }
             }
 
-            const statusFilter = document.getElementById('statusFilter');
             const syFilter = document.getElementById('schoolYearFilter');
             const assmntStatusFilter = document.getElementById('assessmentStatusFilter');
-            if (statusFilter) statusFilter.addEventListener('change', doSearch);
+            const gradeFilter = document.getElementById('gradeFilter');
+            const strandFilter = document.getElementById('strandFilter');
+            
             if (syFilter) syFilter.addEventListener('change', doSearch);
             if (assmntStatusFilter) assmntStatusFilter.addEventListener('change', doSearch);
+            if (gradeFilter) gradeFilter.addEventListener('change', doSearch);
+            if (strandFilter) strandFilter.addEventListener('change', doSearch);
+            
             if (searchBtn) searchBtn.addEventListener('click', doSearch);
             searchStudent.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') doSearch();
@@ -1544,8 +1594,9 @@ foreach ($strandCounts as $strand => $count) {
             // Clear search — reset to active and reload
             clearBtn.addEventListener('click', async function() {
                 searchStudent.value = '';
-                if (statusFilter) statusFilter.value = 'active';
                 if (assmntStatusFilter) assmntStatusFilter.value = 'all';
+                if (gradeFilter) gradeFilter.value = 'all';
+                if (strandFilter) strandFilter.value = 'all';
                 // Note: we might want to reset schoolYearFilter to activeYearId, but reloading the default state is handled by doSearch keeping current value unless forced.
                 await doSearch();
             });

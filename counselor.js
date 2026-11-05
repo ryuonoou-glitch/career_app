@@ -677,7 +677,7 @@ function escapeHtml(text) {
 function buildLikertHtml(value, questionText, index) {
     const selectedVal = Number(value);
     let circlesHtml = '';
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 4; i++) {
         const isSelected = i === selectedVal ? 'selected' : '';
         circlesHtml += `<div class="likert-circle ${isSelected}">${i}</div>`;
     }

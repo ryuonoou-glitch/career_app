@@ -30,7 +30,7 @@ if ($student) {
     $assessmentsCount = $row['count'];
     $stmt->close();
 
-    $stmt = $mysqli->prepare("SELECT COUNT(DISTINCT r.course_id) as count FROM recommendations r JOIN student_assessments sa ON r.assessment_id = sa.id WHERE sa.student_id = ?");
+    $stmt = $mysqli->prepare("SELECT COUNT(DISTINCT vr.course_id) as count FROM verified_recommendations vr JOIN student_assessments sa ON vr.assessment_id = sa.id WHERE sa.student_id = ? AND sa.verification_status = 'verified'");
     $stmt->bind_param("i", $student['id']);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -42,9 +42,9 @@ if ($student) {
         SELECT COUNT(DISTINCT cs.school_id) as count 
         FROM course_schools cs 
         JOIN schools s ON cs.school_id = s.id 
-        JOIN recommendations r ON cs.course_id = r.course_id 
-        JOIN student_assessments sa ON r.assessment_id = sa.id 
-        WHERE sa.student_id = ? AND s.status = 'active'
+        JOIN verified_recommendations vr ON cs.course_id = vr.course_id 
+        JOIN student_assessments sa ON vr.assessment_id = sa.id 
+        WHERE sa.student_id = ? AND s.status = 'active' AND sa.verification_status = 'verified'
     ");
     $stmt->bind_param("i", $student['id']);
     $stmt->execute();

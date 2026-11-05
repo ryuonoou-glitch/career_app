@@ -701,7 +701,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 $stmt->close();
 
                 if ($admin && (password_verify($currentPassword, $admin['password']) || $currentPassword === $admin['password'])) {
-                    $hashedNewPassword = password_hash($newPassword, PASSWORD_DEFAULT);
+                    if (password_verify($newPassword, $admin['password']) || $newPassword === $admin['password']) {
+                        $passwordValid = false;
+                        $profileError = true;
+                        $profileErrorMessage = 'This is your current password. Please choose a new password.';
+                    } else {
+                        $hashedNewPassword = password_hash($newPassword, PASSWORD_DEFAULT);
+                    }
                 } else {
                     $passwordValid = false;
                     $profileError = true;
@@ -841,7 +847,7 @@ function handleAddAdmin($mysqli, array $input) {
         return ['success' => false, 'message' => 'Full name and email are required.'];
     }
 
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    if (!isValidEmailAddress($email)) {
         return ['success' => false, 'message' => 'Please enter a valid email address.'];
     }
 
@@ -2426,7 +2432,7 @@ if (empty($systemInfo['school_year'])) {
                                         <input type="file" id="restore_file" name="restore_file" accept=".sql" required style="margin-top: 0.5rem;">
                                     </div>
                                     <div class="form-actions">
-                                        <button type="submit" class="btn-primary" id="restoreBtn" onclick="return confirm('Are you sure you want to restore the database? This will overwrite all existing data!');">
+                                        <button type="submit" class="btn-primary" id="restoreBtn">
                                             <i class="fa-solid fa-upload"></i>
                                             Restore Database
                                         </button>
@@ -3719,26 +3725,36 @@ if (empty($systemInfo['school_year'])) {
             document.querySelectorAll('.school-years-table .btn-action.archive').forEach(btn => {
                 btn.addEventListener('click', function() {
                     const id = this.getAttribute('data-id');
-                    if (confirm('Are you sure you want to archive this school year?')) {
-                        const form = document.createElement('form');
-                        form.method = 'post';
-                        form.innerHTML = `<input type="hidden" name="action" value="archive_school_year"><input type="hidden" name="id" value="${id}">`;
-                        document.body.appendChild(form);
-                        form.submit();
-                    }
+                    showCustomConfirm(
+                        'Archive School Year',
+                        'Are you sure you want to archive this school year?',
+                        () => {
+                            const form = document.createElement('form');
+                            form.method = 'post';
+                            form.innerHTML = `<input type="hidden" name="action" value="archive_school_year"><input type="hidden" name="id" value="${id}">`;
+                            document.body.appendChild(form);
+                            form.submit();
+                        },
+                        true
+                    );
                 });
             });
 
             document.querySelectorAll('.school-years-table .btn-action.unarchive').forEach(btn => {
                 btn.addEventListener('click', function() {
                     const id = this.getAttribute('data-id');
-                    if (confirm('Unarchive this school year? It will be available again but not set as current.')) {
-                        const form = document.createElement('form');
-                        form.method = 'post';
-                        form.innerHTML = `<input type="hidden" name="action" value="unarchive_school_year"><input type="hidden" name="id" value="${id}">`;
-                        document.body.appendChild(form);
-                        form.submit();
-                    }
+                    showCustomConfirm(
+                        'Unarchive School Year',
+                        'Unarchive this school year? It will be available again but not set as current.',
+                        () => {
+                            const form = document.createElement('form');
+                            form.method = 'post';
+                            form.innerHTML = `<input type="hidden" name="action" value="unarchive_school_year"><input type="hidden" name="id" value="${id}">`;
+                            document.body.appendChild(form);
+                            form.submit();
+                        },
+                        false
+                    );
                 });
             });
 
@@ -3996,8 +4012,79 @@ if (empty($systemInfo['school_year'])) {
                     });
                 }
             });
+
+            // Handle Restore Form Submission
+            const restoreForm = document.getElementById('restoreForm');
+            if (restoreForm) {
+                restoreForm.addEventListener('submit', function(e) {
+                    if (!this.dataset.confirmed) {
+                        e.preventDefault();
+                        showCustomConfirm(
+                            'Restore Database',
+                            'Are you sure you want to restore the database? This will overwrite all existing data!',
+                            () => {
+                                this.dataset.confirmed = 'true';
+                                this.submit();
+                            },
+                            true
+                        );
+                    }
+                });
+            }
         });
+
+        function showCustomConfirm(title, text, onConfirm, isDanger = false) {
+            document.getElementById('customConfirmTitle').textContent = title;
+            document.getElementById('customConfirmText').textContent = text;
+            const icon = document.getElementById('customConfirmIcon');
+            const confirmBtn = document.getElementById('btnOkCustomConfirm');
+            
+            if (isDanger) {
+                icon.className = 'fa-solid fa-triangle-exclamation';
+                icon.style.color = '#ef4444';
+                confirmBtn.style.background = '#ef4444';
+            } else {
+                icon.className = 'fa-solid fa-circle-question';
+                icon.style.color = '#f59e0b';
+                confirmBtn.style.background = '#f59e0b';
+            }
+
+            const modal = document.getElementById('customConfirmModal');
+            modal.classList.add('show');
+
+            const cancelBtn = document.getElementById('btnCancelCustomConfirm');
+            
+            // Remove old event listeners by replacing the node
+            const newCancelBtn = cancelBtn.cloneNode(true);
+            cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+            
+            const newConfirmBtn = confirmBtn.cloneNode(true);
+            confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+            
+            newCancelBtn.addEventListener('click', () => {
+                modal.classList.remove('show');
+            });
+            
+            newConfirmBtn.addEventListener('click', () => {
+                modal.classList.remove('show');
+                onConfirm();
+            });
+        }
     </script>
+
+    <!-- Custom Confirm Modal -->
+    <div class="logout-modal-overlay" id="customConfirmModal">
+        <div class="logout-modal">
+            <div class="logout-modal-icon"><i class="fa-solid fa-triangle-exclamation" id="customConfirmIcon" style="color: #f59e0b;"></i></div>
+            <h3 id="customConfirmTitle">Confirm Action</h3>
+            <p id="customConfirmText" style="margin-bottom: 1.5rem;">Are you sure?</p>
+            <div class="logout-modal-actions">
+                <button type="button" class="btn-logout-cancel" id="btnCancelCustomConfirm">Cancel</button>
+                <button type="button" class="btn-logout-confirm" id="btnOkCustomConfirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <?php require_once __DIR__ . '/includes/session_timeout_footer.php'; ?>
 
     <!-- ================================================================== -->

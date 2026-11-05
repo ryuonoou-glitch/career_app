@@ -21,6 +21,18 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' && isset($_GET['logout']) && $_GET['lo
     $success = 'You have successfully logged out.';
 }
 
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' && isset($_GET['signup'])) {
+    if ($_GET['signup'] === 'success') {
+        if (isset($_GET['email_sent']) && $_GET['email_sent'] === '1') {
+            $success = 'Account created successfully! A confirmation email has been sent to you. Please log in.';
+        } else {
+            $success = 'Account created successfully! You can now log in below.';
+        }
+    } elseif ($_GET['signup'] === 'pending') {
+        $success = 'Account created successfully! However, your identity must be manually verified. Please wait for an administrator to approve your account before logging in.';
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
@@ -37,17 +49,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($result->num_rows === 1) {
             $student = $result->fetch_assoc();
 
-            if ($student['status'] !== 'active' && $student['status'] !== 'graduated') {
+            if ($student['status'] !== 'active' && $student['status'] !== 'graduated' && $student['status'] !== 'inactive') {
                 $error = 'Your account is not active. Please contact the administrator.';
             } elseif (password_verify($password, $student['password'])) {
+                session_unset();
                 session_regenerate_id(true);
-                // Reset student session keys while preserving any active admin/staff session
-                unset(
-                    $_SESSION['student_id'],
-                    $_SESSION['student_db_id'],
-                    $_SESSION['first_name'],
-                    $_SESSION['last_name']
-                );
                 $_SESSION['student_id'] = $student['student_id'];
                 $_SESSION['student_db_id'] = $student['id'];
                 $_SESSION['first_name'] = $student['first_name'];
@@ -82,16 +88,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($counselor['status'] !== 'active') {
                     $error = 'Your account is not active. Please contact the administrator.';
                 } elseif (password_verify($password, $counselor['password'])) {
+                    session_unset();
                     session_regenerate_id(true);
-                    // Reset counselor session keys while preserving any active student or admin session
-                    unset(
-                        $_SESSION['counselor_id'],
-                        $_SESSION['counselor_name'],
-                        $_SESSION['counselor_email'],
-                        $_SESSION['staff_id'],
-                        $_SESSION['staff_role'],
-                        $_SESSION['staff_name']
-                    );
                     $_SESSION['counselor_id'] = $counselor['id'];
                     $counselorFullNameParts = array_filter([$counselor['first_name'], $counselor['middle_name'] ?? '', $counselor['last_name']], 'strlen');
                     $_SESSION['counselor_name'] = implode(' ', $counselorFullNameParts);
@@ -251,6 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         .login-nav .brand-lockup {
             justify-self: center;
+            grid-column: 2;
             display: inline-flex;
             align-items: center;
             justify-content: center;

@@ -1552,16 +1552,16 @@ td.empty-cell,
 .search-box-wrapper {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
-    flex: 0 1 240px;
-    min-width: 150px;
+    gap: 0.45rem;
+    flex: 0 1 auto;
+    min-width: fit-content;
 }
 
 .search-box {
     position: relative;
     flex: 1;
-    min-width: 180px;
-    max-width: 280px;
+    min-width: 200px;
+    max-width: 320px;
     display: flex;
     align-items: center;
     gap: 0.35rem;
@@ -2784,36 +2784,49 @@ td.empty-cell,
 
 .questions-table th:nth-child(1),
 .questions-table td:nth-child(1) {
-    width: 40%;
+    width: 70px;
+    max-width: 80px;
+    text-align: center;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
 }
 
 .questions-table th:nth-child(2),
 .questions-table td:nth-child(2) {
-    width: 15%;
+    width: auto;
+    min-width: 280px;
 }
 
 .questions-table th:nth-child(3),
 .questions-table td:nth-child(3) {
-    width: 20%;
+    width: 130px;
+    white-space: nowrap;
 }
 
 .questions-table th:nth-child(4),
 .questions-table td:nth-child(4) {
-    width: 110px;
-    padding-left: 0.25rem;
-    padding-right: 0.25rem;
-    text-align: center;
+    width: 160px;
+    white-space: nowrap;
 }
 
-.questions-table th:nth-child(4) {
+.questions-table th:nth-child(5),
+.questions-table td:nth-child(5) {
+    width: 115px;
+    white-space: nowrap;
+}
+
+.questions-table th:nth-child(6),
+.questions-table td:nth-child(6) {
+    width: 130px;
     text-align: center;
+    white-space: nowrap;
 }
 
 .questions-table .question-text {
-    max-width: 300px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: none;
+    line-height: 1.5;
+    word-break: break-word;
+    white-space: normal;
 }
 
 /* Modal Large */

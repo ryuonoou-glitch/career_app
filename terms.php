@@ -109,43 +109,43 @@ require_once 'system_config.php';
         </div>
 
         <div class="legal-section">
-            <h2>1. Acceptance of Terms</h2>
-            <p>By accessing and using the <?php echo htmlspecialchars(getSystemConfig('name')); ?> (hereinafter referred to as the "System"), you accept and agree to be bound by the terms and provision of this agreement. If you do not agree to abide by these terms, please do not use this System.</p>
+            <h2>1. Acceptance of Terms & School Policy Alignment</h2>
+            <p>By accessing and using the <?php echo htmlspecialchars(getSystemConfig('name')); ?> (hereinafter referred to as the "System"), you agree to be bound by these terms, which are strictly aligned with the School's Student Handbook and Academic Policies. If you do not agree to abide by these terms or the School's policies, please do not use this System.</p>
         </div>
 
         <div class="legal-section">
-            <h2>2. Purpose of the System</h2>
-            <p>The System is designed to provide career guidance, assessment tools, and course recommendations for students. The recommendations provided are generated based on your assessment results and are intended for guidance purposes only. They do not guarantee admission into specific schools, courses, or career paths.</p>
+            <h2>2. Purpose of the System & Academic Integrity</h2>
+            <p>The System is provided by the School to offer career guidance, assessment tools, and course recommendations exclusively for enrolled students. All assessments must be completed honestly and independently, in accordance with the School's Academic Integrity guidelines. The recommendations generated are for guidance purposes only and do not guarantee admission into specific university programs or career paths.</p>
         </div>
 
         <div class="legal-section">
-            <h2>3. User Accounts</h2>
+            <h2>3. User Accounts & Student Responsibilities</h2>
             <ul>
-                <li>You must be a registered student, counselor, or administrator to access the full features of the System.</li>
-                <li>You are responsible for maintaining the confidentiality of your login credentials.</li>
-                <li>You agree to provide accurate and complete information when registering or updating your profile.</li>
-                <li>The administration reserves the right to suspend or terminate accounts that violate these terms or institutional policies.</li>
+                <li>You must be a currently enrolled student, official school counselor, or authorized school administrator to access the System.</li>
+                <li>Your login credentials (including your Student ID) are strictly non-transferable. Sharing your account compromises school security protocols.</li>
+                <li>You are required to provide accurate information. Falsifying demographic or academic data is a violation of the Student Code of Conduct.</li>
+                <li>The School Administration reserves the right to suspend accounts that violate these terms, the Student Handbook, or general institutional policies.</li>
             </ul>
         </div>
 
         <div class="legal-section">
-            <h2>4. Privacy and Data Usage</h2>
-            <p>Your privacy is important to us. Information collected through the System, including assessment results, demographic data, and profile details, will be used solely for the purpose of providing career guidance and producing generalized statistical reports for the institution. Please refer to our <a href="privacy.php" style="color: #fbbf24;">Privacy Policy</a> for more detailed information on how your data is handled.</p>
+            <h2>4. Educational Privacy and Data Usage</h2>
+            <p>The School strictly adheres to educational data privacy laws (such as the Data Privacy Act of 2012 / FERPA equivalents). Information collected through the System—including assessment results and profile details—is used solely for providing career guidance and generating anonymized institutional reports. Please refer to our <a href="privacy.php" style="color: #fbbf24;">Privacy Policy</a> for more details.</p>
         </div>
 
         <div class="legal-section">
             <h2>5. Intellectual Property</h2>
-            <p>All content, algorithms, assessments, and visual design included in this System are the property of the institution or its content suppliers and are protected by applicable copyright and intellectual property laws.</p>
+            <p>All content, algorithms, assessments, and visual design included in this System are the exclusive property of the School and its content suppliers, protected by applicable intellectual property and copyright laws. Unauthorized reproduction or distribution is strictly prohibited.</p>
         </div>
 
         <div class="legal-section">
             <h2>6. Limitation of Liability</h2>
-            <p>The institution and the developers of this System shall not be held liable for any direct, indirect, incidental, or consequential damages resulting from the use or inability to use the System or the recommendations provided.</p>
+            <p>The School, its Administration, and the developers of this System shall not be held liable for any direct or indirect damages resulting from the use of the System. The career recommendations are advisory in nature and the final academic decisions remain the responsibility of the student and their guardians.</p>
         </div>
 
         <div class="legal-section">
             <h2>7. Modifications to Terms</h2>
-            <p>We reserve the right to modify these terms at any time. Significant changes will be communicated to users through the System's notification features. Continued use of the System after any such changes constitutes your consent to such changes.</p>
+            <p>The School Administration reserves the right to modify these terms at any time to reflect updates in educational policies. Significant changes will be communicated through official School channels or System notifications. Continued use constitutes your consent to these changes.</p>
         </div>
 
         <div style="margin-top: 3rem; text-align: center;">

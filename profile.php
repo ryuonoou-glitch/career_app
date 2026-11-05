@@ -119,6 +119,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $email = trim($_POST['email'] ?? '');
         $address = trim($_POST['address'] ?? '');
         
+        if ($email === '' || !isValidEmailAddress($email)) {
+            echo json_encode(['success' => false, 'message' => 'Please enter a valid email address.']);
+            exit;
+        }
+        
         $stmt = $mysqli->prepare("
             UPDATE students 
             SET first_name = ?, middle_name = ?, last_name = ?, suffix = ?, gender = ?, email = ?, address = ?, updated_at = NOW()
@@ -174,6 +179,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         } elseif (strlen($newPassword) < 8) {
             echo json_encode(['success' => false, 'message' => 'New password must be at least 8 characters long.']);
             exit;
+        } elseif (!preg_match('/[A-Z]/', $newPassword)) {
+            echo json_encode(['success' => false, 'message' => 'New password must contain at least one uppercase letter.']);
+            exit;
+        } elseif (!preg_match('/[a-z]/', $newPassword)) {
+            echo json_encode(['success' => false, 'message' => 'New password must contain at least one lowercase letter.']);
+            exit;
+        } elseif (!preg_match('/[0-9]/', $newPassword)) {
+            echo json_encode(['success' => false, 'message' => 'New password must contain at least one number.']);
+            exit;
+        } elseif (!preg_match('/[\W_]/', $newPassword)) {
+            echo json_encode(['success' => false, 'message' => 'New password must contain at least one special character (e.g. @, #, !, $).']);
+            exit;
         } else {
             $stmt = $mysqli->prepare('SELECT password FROM students WHERE id = ? AND student_id = ? LIMIT 1');
             $stmt->bind_param('is', $dbId, $sid);
@@ -183,6 +200,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
             if (!$row || !password_verify($currentPassword, $row['password'])) {
                 echo json_encode(['success' => false, 'message' => 'Current password is incorrect.']);
+                exit;
+            } elseif (password_verify($newPassword, $row['password']) || $newPassword === $row['password']) {
+                echo json_encode(['success' => false, 'message' => 'This is your current password. Please choose a new password.']);
                 exit;
             } else {
                 $hashed = password_hash($newPassword, PASSWORD_DEFAULT);
@@ -264,6 +284,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['deactivate_account'])
     }
     session_destroy();
     header('Location: login.php?account=inactive');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reactivate_account'])) {
+    $dbId = (int) ($_SESSION['student_db_id'] ?? 0);
+    $sid = $_SESSION['student_id'] ?? '';
+    if ($dbId > 0 && $sid !== '') {
+        // Fetch details before reactivation for logging/notifying
+        $studentName = 'A student';
+        $studentEmail = '';
+        $nameStmt = $mysqli->prepare("SELECT first_name, middle_name, last_name, email FROM students WHERE id = ?");
+        if ($nameStmt) {
+            $nameStmt->bind_param('i', $dbId);
+            $nameStmt->execute();
+            $studentData = $nameStmt->get_result()->fetch_assoc();
+            if ($studentData) {
+                $studentName = trim(implode(' ', array_filter([$studentData['first_name'], $studentData['middle_name'], $studentData['last_name']])));
+                $studentEmail = $studentData['email'];
+            }
+            $nameStmt->close();
+        }
+
+        $stmt = $mysqli->prepare("UPDATE students SET status = 'active' WHERE id = ? AND student_id = ? AND status = 'inactive'");
+        if ($stmt) {
+            $stmt->bind_param('is', $dbId, $sid);
+            if ($stmt->execute() && $stmt->affected_rows > 0) {
+                // Load audit and notify helpers
+                require_once __DIR__ . '/includes/audit.php';
+                require_once __DIR__ . '/includes/notify.php';
+                
+                // Write activity/audit log
+                log_activity(
+                    $dbId,
+                    'student',
+                    'Reactivated Student',
+                    'students',
+                    $dbId,
+                    "Student {$studentName} ({$studentEmail}) reactivated their own account.",
+                    json_encode(['status' => 'inactive']),
+                    json_encode(['status' => 'active'])
+                );
+
+                // Notify admin
+                notify_admin(
+                    'Student Account Reactivated',
+                    "Student {$studentName} has reactivated their account.",
+                    'info',
+                    'manage_students.php'
+                );
+            }
+            $stmt->close();
+        }
+    }
+    header('Location: dashboard.php');
     exit;
 }
 
@@ -1158,12 +1232,34 @@ $profileCompletion = round(($filled / count($fields)) * 100);
             }
             .hero-stats-group {
                 width: 100%;
-                justify-content: center;
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 0.5rem;
+                align-items: stretch;
             }
             .hero-stat-pill {
-                flex: 1;
-                min-width: 130px;
+                min-width: 0;
+                flex: unset;
                 justify-content: center;
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                padding: 0.75rem 0.5rem;
+                gap: 0.5rem;
+            }
+            .stat-icon-wrap {
+                width: 32px;
+                height: 32px;
+                font-size: 0.85rem;
+            }
+            .stat-val {
+                font-size: 1rem;
+            }
+            .stat-lbl {
+                font-size: 0.55rem;
+                letter-spacing: 0;
+                overflow-wrap: break-word;
+                word-break: break-word;
             }
             .form-grid-row.two-cols, .form-grid-row.three-cols {
                 grid-template-columns: 1fr;
@@ -1176,6 +1272,7 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                 justify-content: center;
             }
         }
+
     </style>
 </head>
 <body data-user-logged-in="true">
@@ -1285,11 +1382,20 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                                     <h2 class="hero-name" id="heroDisplayName"><?php echo $studentName; ?></h2>
                                     <div class="hero-badges">
                                         <span class="hero-badge badge-role"><i class="fa-solid fa-user-graduate"></i> Student</span>
+                                        <?php if (isset($isReadonly) && $isReadonly): ?>
+                                            <span class="hero-badge badge-status" style="background-color: rgba(239, 68, 68, 0.15); color: #fca5a5; border-color: rgba(239, 68, 68, 0.3);">
+                                                <i class="fa-solid fa-lock"></i> Read-Only
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="hero-badge badge-status" style="background-color: rgba(16, 185, 129, 0.15); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3);">
+                                                <i class="fa-solid fa-circle-check"></i> Active
+                                            </span>
+                                        <?php endif; ?>
                                         <span class="hero-badge badge-grade"><i class="fa-solid fa-layer-group"></i> <?php echo htmlspecialchars($student['grade_level'] ?? 'Not Assigned'); ?></span>
                                     </div>
                                 </div>
                                 <div class="hero-meta-chips">
-                                    <span class="meta-chip" title="Student ID / LRN">
+                                    <span class="meta-chip" title="Student ID">
                                         <i class="fa-solid fa-id-card"></i> 
                                         <?php echo htmlspecialchars($student['student_id']); ?>
                                         <button class="copy-id-btn" onclick="copyToClipboard('<?php echo htmlspecialchars($student['student_id']); ?>')" title="Copy ID">
@@ -1324,7 +1430,7 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                                 </div>
                                 <div class="stat-meta">
                                     <span class="stat-val"><?php echo $coursesCount; ?></span>
-                                    <span class="stat-lbl">Recommendations</span>
+                                    <span class="stat-lbl">Top Matches</span>
                                 </div>
                             </div>
                             <div class="hero-stat-pill">
@@ -1460,7 +1566,14 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                                     <label for="suffix">Suffix</label>
                                     <div class="input-icon-wrapper">
                                         <i class="fa-solid fa-quote-right lead-icon"></i>
-                                        <input type="text" id="suffix" name="suffix" value="<?php echo htmlspecialchars($student['suffix']); ?>" placeholder="e.g. Jr., III">
+                                        <select id="suffix" name="suffix">
+                                            <option value="" <?php echo (empty($student['suffix'])) ? 'selected' : ''; ?>>None</option>
+                                            <option value="Jr" <?php echo ($student['suffix'] === 'Jr') ? 'selected' : ''; ?>>Jr.</option>
+                                            <option value="Sr" <?php echo ($student['suffix'] === 'Sr') ? 'selected' : ''; ?>>Sr.</option>
+                                            <option value="II" <?php echo ($student['suffix'] === 'II') ? 'selected' : ''; ?>>II</option>
+                                            <option value="III" <?php echo ($student['suffix'] === 'III') ? 'selected' : ''; ?>>III</option>
+                                            <option value="IV" <?php echo ($student['suffix'] === 'IV') ? 'selected' : ''; ?>>IV</option>
+                                        </select>
                                     </div>
                                 </div>
                                 <div class="form-field-group">
@@ -1519,7 +1632,7 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                             <div class="info-tile">
                                 <div class="info-tile-icon"><i class="fa-solid fa-id-card"></i></div>
                                 <div class="info-tile-content">
-                                    <span class="info-tile-label">Learner Reference Number (LRN)</span>
+                                    <span class="info-tile-label">Student ID</span>
                                     <span class="info-tile-value"><?php echo htmlspecialchars($student['student_id']); ?> <i class="fa-solid fa-circle-check" style="color:#10b981; margin-left: 5px; font-size: 0.85rem;" title="Verified"></i></span>
                                 </div>
                             </div>
@@ -1645,29 +1758,43 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                     <div class="danger-zone-card">
                         <div class="section-title-group">
                             <h3 class="danger-title"><i class="fa-solid fa-triangle-exclamation"></i> Danger Zone</h3>
-                            <p>Irreversible and destructive account actions.</p>
+                            <p>Account status actions.</p>
                         </div>
                         
-                        <div class="danger-desc-box">
-                            <p><strong>Deactivate your account</strong></p>
-                            <p>Once you deactivate your account, you will immediately lose access to the system.</p>
-                            <ul>
-                                <li>Your profile will be hidden from the active students list.</li>
-                                <li>You will not be able to log in, take assessments, or view results.</li>
-                                <li>An administrator must manually reactivate your account if you wish to return.</li>
-                            </ul>
-                        </div>
-                        
-                        <button class="btn-danger-action" id="openDeactivateModalBtn">
-                            <i class="fa-solid fa-user-slash"></i> Deactivate My Account
-                        </button>
+                        <?php if ($student['status'] === 'inactive'): ?>
+                            <div class="danger-desc-box">
+                                <p><strong>Reactivate your account</strong></p>
+                                <p>Your account is currently deactivated.</p>
+                                <ul>
+                                    <li>Reactivating will restore your access to the system.</li>
+                                    <li>Your profile will be visible again.</li>
+                                    <li>You will be able to take assessments and view results.</li>
+                                </ul>
+                            </div>
+                            
+                            <form method="post" action="profile.php" style="margin-top: 1rem;">
+                                <input type="hidden" name="reactivate_account" value="1">
+                                <button type="submit" class="btn-success-action" style="padding: 0.75rem 1.25rem; border-radius: 10px; background: #10b981; color: #ffffff; border: none; font-weight: 600; cursor: pointer; gap: 0.5rem; display: inline-flex; align-items: center; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25); transition: all 0.25s ease;" onmouseover="this.style.transform='translateY(-2px)';" onmouseout="this.style.transform='translateY(0)';">
+                                    <i class="fa-solid fa-user-check"></i> Reactivate My Account
+                                </button>
+                            </form>
+                        <?php else: ?>
+                            <div class="danger-desc-box">
+                                <p><strong>Deactivate your account</strong></p>
+                                <p>Once you deactivate your account, you will immediately lose access to the system.</p>
+                                <ul>
+                                    <li>Your profile will be hidden from the active students list.</li>
+                                    <li>You will not be able to log in, take assessments, or view results.</li>
+                                    <li>You can log back in and reactivate your account here later.</li>
+                                </ul>
+                            </div>
+                            
+                            <button class="btn-danger-action" id="openDeactivateModalBtn">
+                                <i class="fa-solid fa-user-slash"></i> Deactivate My Account
+                            </button>
+                        <?php endif; ?>
                     </div>
-                    
-                    <div style="margin-top: 2rem;">
-                        <a href="logout.php?role=student" class="btn-secondary-action" style="width: auto;">
-                            <i class="fa-solid fa-sign-out-alt"></i> Sign out of current session
-                        </a>
-                    </div>
+
                 </div>
 
             </div>
@@ -1685,7 +1812,7 @@ $profileCompletion = round(($filled / count($fields)) * 100);
             <h4>Deactivate Account?</h4>
             <p>
                 Are you absolutely sure you want to deactivate your student account? 
-                You will be immediately logged out and will not be able to sign in again until an administrator reactivates your access.
+                You will be immediately logged out, but you can sign in again later and reactivate your account from this profile page.
             </p>
             <div class="modal-btn-row">
                 <button class="modal-btn-cancel" id="cancelDeactivateBtn">Cancel</button>
@@ -1784,7 +1911,7 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                     const data = await res.json();
                     
                     if (data.success) {
-                        showAlert('profileAlert', 'success', data.message || 'Profile updated successfully!');
+                        showInlineAlert('profileAlert', 'success', data.message || 'Profile updated successfully!');
                         
                         // Update View Text
                         document.getElementById('viewFirstName').textContent = fd.get('firstName');
@@ -1807,11 +1934,11 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                         saveBtn.innerHTML = '<i class="fa-solid fa-check"></i> Saved!';
                         setTimeout(() => toggleProfileEdit(), 1000); // Close form
                     } else {
-                        showAlert('profileAlert', 'error', data.message || 'Database error occurred.');
+                        showInlineAlert('profileAlert', 'error', data.message || 'Database error occurred.');
                         saveBtn.innerHTML = origHtml;
                     }
                 } catch (err) {
-                    showAlert('profileAlert', 'error', 'An error occurred while saving.');
+                    showInlineAlert('profileAlert', 'error', 'An error occurred while saving.');
                     saveBtn.innerHTML = origHtml;
                 }
                 
@@ -1835,7 +1962,7 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                 const conf = document.getElementById('confirmPassword').value;
 
                 if (newp !== conf) {
-                    showAlert('passwordAlert', 'error', 'New password and confirmation do not match.');
+                    showInlineAlert('passwordAlert', 'error', 'New password and confirmation do not match.');
                     return;
                 }
 
@@ -1853,16 +1980,16 @@ $profileCompletion = round(($filled / count($fields)) * 100);
                     const res = await fetch('profile.php', { method: 'POST', body: fd });
                     const data = await res.json();
                     if (data.success) {
-                        showAlert('passwordAlert', 'success', data.message);
+                        showInlineAlert('passwordAlert', 'success', data.message);
                         passwordForm.reset();
                         updatePasswordStrength();
                         btn.innerHTML = '<i class="fa-solid fa-check"></i> Updated!';
                     } else {
-                        showAlert('passwordAlert', 'error', data.message);
+                        showInlineAlert('passwordAlert', 'error', data.message);
                         btn.innerHTML = origHtml;
                     }
                 } catch (err) {
-                    showAlert('passwordAlert', 'error', 'An error occurred.');
+                    showInlineAlert('passwordAlert', 'error', 'An error occurred.');
                     btn.innerHTML = origHtml;
                 }
                 setTimeout(() => { btn.disabled = false; btn.innerHTML = origHtml; }, 2000);
@@ -1929,19 +2056,10 @@ $profileCompletion = round(($filled / count($fields)) * 100);
         }
     }
 
-    function showAlert(containerId, type, message) {
-        const alert = document.getElementById(containerId);
-        if (!alert) return;
-        const icon = alert.querySelector('i');
-        const msg = alert.querySelector('.alert-msg');
-        
-        alert.className = `profile-alert ${type} active`;
-        msg.textContent = message;
-        icon.className = type === 'success' ? 'fa-solid fa-circle-check' : 'fa-solid fa-circle-exclamation';
-        
-        setTimeout(() => {
-            alert.classList.remove('active');
-        }, 5000);
+    function showInlineAlert(containerId, type, message) {
+        if (typeof window.showAlert === 'function') {
+            window.showAlert(message, type === 'success' ? 'Success' : 'Error', type === 'success' ? 'fa-circle-check' : 'fa-circle-xmark');
+        }
     }
 
     function showToast(message, type = 'success') {

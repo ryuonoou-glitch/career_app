@@ -1,4 +1,5 @@
-	# Environment / secrets
+git add .
+git status	# Environment / secrets
 .env
 
 # User-uploaded files

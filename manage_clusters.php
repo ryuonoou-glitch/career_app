@@ -267,43 +267,125 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             echo json_encode($response);
             exit;
             
+        case 'check_cluster_associations':
+            $clusterId = (int)($_POST['id'] ?? 0);
+            $checkC = $mysqli->prepare("SELECT COUNT(*) as count FROM courses WHERE cluster_id = ?");
+            $checkC->bind_param('i', $clusterId);
+            $checkC->execute();
+            $courseCount = (int)($checkC->get_result()->fetch_assoc()['count'] ?? 0);
+            $checkC->close();
+
+            $checkJ = $mysqli->prepare("SELECT COUNT(*) as count FROM jobs WHERE cluster_id = ?");
+            $checkJ->bind_param('i', $clusterId);
+            $checkJ->execute();
+            $jobCount = (int)($checkJ->get_result()->fetch_assoc()['count'] ?? 0);
+            $checkJ->close();
+
+            $totalAssociations = $courseCount + $jobCount;
+            echo json_encode([
+                'success' => true,
+                'count' => $totalAssociations,
+                'course_count' => $courseCount,
+                'job_count' => $jobCount
+            ]);
+            exit;
+
         case 'delete_cluster':
             $clusterId = (int)($_POST['id'] ?? 0);
+            $unlinkAssociations = !empty($_POST['unlink_associations']) || !empty($_POST['unlink_courses']);
             if ($clusterId <= 0) {
                 $response['message'] = 'Invalid cluster ID';
                 echo json_encode($response);
                 exit;
             }
             
-            // Remove association block; courses will be unassigned prior to cluster deletion
+            // Check if cluster is associated with any courses or jobs
+            $checkC = $mysqli->prepare("SELECT COUNT(*) as count FROM courses WHERE cluster_id = ?");
+            $checkC->bind_param('i', $clusterId);
+            $checkC->execute();
+            $courseCount = (int)($checkC->get_result()->fetch_assoc()['count'] ?? 0);
+            $checkC->close();
+
+            $checkJ = $mysqli->prepare("SELECT COUNT(*) as count FROM jobs WHERE cluster_id = ?");
+            $checkJ->bind_param('i', $clusterId);
+            $checkJ->execute();
+            $jobCount = (int)($checkJ->get_result()->fetch_assoc()['count'] ?? 0);
+            $checkJ->close();
+
+            $totalAssociations = $courseCount + $jobCount;
+            if ($totalAssociations > 0 && !$unlinkAssociations) {
+                $response['has_associations'] = true;
+                $response['count'] = $totalAssociations;
+                $response['message'] = 'This cluster is currently associated with one or more courses or jobs. Please confirm unlinking.';
+                echo json_encode($response);
+                exit;
+            }
             
             $oldCluster = null;
             $oldQ = $mysqli->prepare("SELECT * FROM clusters WHERE id = ?");
-            $oldQ->bind_param('i', $clusterId);
-            $oldQ->execute();
-            $oldCluster = $oldQ->get_result()->fetch_assoc();
-            $oldQ->close();
+            if ($oldQ) {
+                $oldQ->bind_param('i', $clusterId);
+                $oldQ->execute();
+                $oldCluster = $oldQ->get_result()->fetch_assoc();
+                $oldQ->close();
+            }
             
-            $stmt = $mysqli->prepare("DELETE FROM clusters WHERE id = ?");
-            $stmt->bind_param('i', $clusterId);
-            
-            if ($stmt->execute()) {
-                // Unassign courses from this cluster since it's deleted
-                $unassignStmt = $mysqli->prepare("UPDATE courses SET cluster_id = NULL WHERE cluster_id = ?");
-                $unassignStmt->bind_param('i', $clusterId);
-                $unassignStmt->execute();
-                $unassignStmt->close();
+            // Database transaction: unassign courses, jobs, and questions, then delete cluster
+            $mysqli->begin_transaction();
+            try {
+                if ($courseCount > 0) {
+                    $unassignC = $mysqli->prepare("UPDATE courses SET cluster_id = NULL WHERE cluster_id = ?");
+                    $unassignC->bind_param('i', $clusterId);
+                    if (!$unassignC->execute()) {
+                        throw new Exception('Failed to unassign courses: ' . $unassignC->error);
+                    }
+                    $unassignC->close();
+                }
+
+                if ($jobCount > 0) {
+                    $unassignJ = $mysqli->prepare("UPDATE jobs SET cluster_id = NULL WHERE cluster_id = ?");
+                    $unassignJ->bind_param('i', $clusterId);
+                    if (!$unassignJ->execute()) {
+                        throw new Exception('Failed to unassign jobs: ' . $unassignJ->error);
+                    }
+                    $unassignJ->close();
+                }
+
+                // Unlink questions if any
+                $unassignQC = $mysqli->prepare("UPDATE questions_career SET cluster_id = NULL WHERE cluster_id = ?");
+                if ($unassignQC) {
+                    $unassignQC->bind_param('i', $clusterId);
+                    $unassignQC->execute();
+                    $unassignQC->close();
+                }
+                $unassignQS = $mysqli->prepare("UPDATE questions_skills SET cluster_id = NULL WHERE cluster_id = ?");
+                if ($unassignQS) {
+                    $unassignQS->bind_param('i', $clusterId);
+                    $unassignQS->execute();
+                    $unassignQS->close();
+                }
+
+                $stmt = $mysqli->prepare("DELETE FROM clusters WHERE id = ?");
+                $stmt->bind_param('i', $clusterId);
+                if (!$stmt->execute()) {
+                    throw new Exception('Failed to delete cluster: ' . $stmt->error);
+                }
+                $stmt->close();
+
+                $mysqli->commit();
+
                 $adminId = $_SESSION['admin_id'] ?? 0;
                 $userType = (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true) ? 'admin' : 'counselor';
                 $cname = $oldCluster['name'] ?? '';
-                log_activity($adminId, $userType, 'Deleted Cluster', 'clusters', $clusterId, "Admin deleted career cluster: {$cname}", json_encode($oldCluster), null);
+                log_activity($adminId, $userType, 'Deleted Cluster', 'clusters', $clusterId, "Admin deleted career cluster: {$cname}" . ($totalAssociations > 0 ? " (unlinked {$totalAssociations} association(s))" : ""), json_encode($oldCluster), null);
 
                 $response['success'] = true;
                 $response['message'] = 'Career cluster deleted successfully';
-            } else {
-                $response['message'] = 'Failed to delete cluster';
+            } catch (Exception $ex) {
+                $mysqli->rollback();
+                $response['success'] = false;
+                $response['message'] = $ex->getMessage();
             }
-            $stmt->close();
             echo json_encode($response);
             exit;
     }
@@ -330,7 +412,12 @@ if (!function_exists('getClusterIconClass')) {
 
 // Get all clusters
 $clusters = [];
-$result = $mysqli->query("SELECT * FROM clusters ORDER BY name");
+$result = $mysqli->query("
+    SELECT c.*, 
+    (SELECT COUNT(*) FROM courses WHERE cluster_id = c.id) as course_count,
+    (SELECT COUNT(*) FROM jobs WHERE cluster_id = c.id) as job_count
+    FROM clusters c ORDER BY c.name
+");
 if ($result) {
     while ($row = $result->fetch_assoc()) {
         $clusters[] = $row;
@@ -386,7 +473,7 @@ if ($coursesRes) {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="admin.css">
+    <link rel="stylesheet" href="admin.css?v=<?php echo filemtime('admin.css'); ?>">
     <style>
         /* ========================================================== */
         /* Redesigned View Cluster Modal                             */
@@ -1941,7 +2028,7 @@ if ($coursesRes) {
                                 <button class="btn-action edit" data-id="<?php echo $cluster['id']; ?>" title="Edit Cluster">
                                     <i class="fa-solid fa-pen"></i> Edit
                                 </button>
-                                <button class="btn-action delete" data-id="<?php echo $cluster['id']; ?>" title="Delete Cluster">
+                                <button class="btn-action delete" data-id="<?php echo $cluster['id']; ?>" data-name="<?php echo htmlspecialchars($cluster['name'] ?? ''); ?>" data-course-count="<?php echo (int)($cluster['course_count'] ?? 0); ?>" data-job-count="<?php echo (int)($cluster['job_count'] ?? 0); ?>" title="Delete Cluster">
                                     <i class="fa-solid fa-trash"></i> Delete
                                 </button>
                             </div>
@@ -2358,7 +2445,7 @@ if ($coursesRes) {
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h2><i class="fa-solid fa-exclamation-triangle"></i> Confirm Delete</h2>
+                <h2><i class="fa-solid fa-exclamation-triangle"></i> <span id="deleteClusterModalTitle">Confirm Delete</span></h2>
                 <button class="modal-close" id="closeDeleteModal">
                     <i class="fa-solid fa-times"></i>
                 </button>
@@ -2368,8 +2455,8 @@ if ($coursesRes) {
                     <div class="delete-icon">
                         <i class="fa-solid fa-trash-alt"></i>
                     </div>
-                    <p class="delete-message">Are you sure you want to delete this cluster?</p>
-                    <p class="delete-warning">This action cannot be undone.</p>
+                    <p class="delete-message" id="deleteClusterMessage">Are you sure you want to delete this cluster?</p>
+                    <p class="delete-warning" id="deleteClusterWarning">This action cannot be undone.</p>
                     <div class="delete-cluster-info">
                         <span class="cluster-name" id="deleteClusterName">Information Technology</span>
                     </div>
@@ -2917,12 +3004,51 @@ if ($coursesRes) {
 
             // Delete Button Handlers
             let deleteClusterId = null;
+            let unlinkClusterMode = false;
+
             document.querySelectorAll('.btn-action.delete').forEach(btn => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const card = btn.closest('.cluster-card');
-                    const clusterName = card.querySelector('.cluster-name').textContent.trim();
+                    const clusterName = btn.getAttribute('data-name') || card.querySelector('.cluster-name').textContent.trim();
                     deleteClusterId = btn.dataset.id;
-                    document.getElementById('deleteClusterName').textContent = clusterName;
+                    unlinkClusterMode = false;
+
+                    const titleEl = document.getElementById('deleteClusterModalTitle');
+                    const msgEl = document.getElementById('deleteClusterMessage');
+                    const nameEl = document.getElementById('deleteClusterName');
+                    const warningEl = document.getElementById('deleteClusterWarning');
+                    const confirmBtn = document.getElementById('confirmDelete');
+
+                    if (nameEl) nameEl.textContent = clusterName;
+
+                    let courseCount = parseInt(btn.getAttribute('data-course-count') || '0', 10);
+                    let jobCount = parseInt(btn.getAttribute('data-job-count') || '0', 10);
+                    let totalCount = courseCount + jobCount;
+
+                    try {
+                        const fd = new FormData();
+                        fd.append('action', 'check_cluster_associations');
+                        fd.append('id', deleteClusterId);
+                        const res = await apiPost(fd);
+                        if (res && res.success && typeof res.count !== 'undefined') {
+                            totalCount = res.count;
+                        }
+                    } catch (e) {}
+
+                    if (totalCount > 0) {
+                        unlinkClusterMode = true;
+                        if (titleEl) titleEl.textContent = 'Delete Cluster?';
+                        if (msgEl) msgEl.textContent = 'This cluster is currently associated with one or more courses or jobs. Deleting this cluster will remove its associations. The courses and jobs themselves will not be deleted.';
+                        if (warningEl) warningEl.textContent = `(${totalCount} association${totalCount > 1 ? 's' : ''} will be unlinked)`;
+                        if (confirmBtn) confirmBtn.textContent = 'Unlink & Delete';
+                    } else {
+                        unlinkClusterMode = false;
+                        if (titleEl) titleEl.textContent = 'Confirm Delete';
+                        if (msgEl) msgEl.textContent = 'Are you sure you want to delete this cluster?';
+                        if (warningEl) warningEl.textContent = 'This action cannot be undone.';
+                        if (confirmBtn) confirmBtn.textContent = 'Delete';
+                    }
+
                     deleteModal.classList.add('active');
                 });
             });
@@ -2936,6 +3062,14 @@ if ($coursesRes) {
                 
                 // Append selected course IDs
                 const ids = Object.keys(addClusterSelectedCourses);
+
+                // Validation: Ensure at least one course or trait is selected
+                const hasTraits = this.querySelectorAll('input[type="checkbox"]:checked').length > 0;
+                if (ids.length === 0 && !hasTraits) {
+                    showStatusModal('Warning', 'Please assign at least one course or select at least one trait/strand alignment before saving.', false);
+                    return;
+                }
+
                 ids.forEach(id => formData.append('course_ids[]', id));
                 
                 try {
@@ -2959,6 +3093,14 @@ if ($coursesRes) {
                 
                 // Append selected course IDs
                 const ids = Object.keys(editClusterSelectedCourses);
+
+                // Validation: Ensure at least one course or trait is selected
+                const hasTraits = this.querySelectorAll('input[type="checkbox"]:checked').length > 0;
+                if (ids.length === 0 && !hasTraits) {
+                    showStatusModal('Warning', 'Please assign at least one course or select at least one trait/strand alignment before saving.', false);
+                    return;
+                }
+
                 ids.forEach(id => formData.append('course_ids[]', id));
                 
                 try {
@@ -2980,6 +3122,9 @@ if ($coursesRes) {
                 const fd = new FormData();
                 fd.append('action', 'delete_cluster');
                 fd.append('id', deleteClusterId);
+                if (unlinkClusterMode) {
+                    fd.append('unlink_associations', '1');
+                }
                 
                 deleteModal.classList.remove('active');
                 try {

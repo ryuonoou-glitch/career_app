@@ -3272,7 +3272,7 @@ body,
     }
 
     .modal-body {
-        padding: 24px 28px 16px;
+        padding: 8px 24px 10px;
         overflow-y: auto;
         flex: 1;
     }
@@ -3281,8 +3281,8 @@ body,
         display: flex;
         align-items: center;
         justify-content: flex-end;
-        gap: 12px;
-        padding: 16px 28px;
+        gap: 10px;
+        padding: 12px 24px;
         border-top: 1px solid rgba(255, 255, 255, 0.06);
         flex-shrink: 0;
         background: #12192b;
@@ -3293,22 +3293,39 @@ body,
         display: flex;
         align-items: center;
         gap: 8px;
-        font-size: 0.9rem;
+        font-size: 0.8rem;
         font-weight: 700;
         color: #f59e0b;
-        margin: 0 0 14px;
-        letter-spacing: 0.02em;
+        margin: 0 0 6px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .student-form .form-section-title::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        margin-left: 8px;
+    }
+
+    .student-form .form-section-title i {
+        font-size: 0.85rem;
     }
 
     .student-form .form-row {
         display: grid;
-        gap: 14px;
-        margin-bottom: 14px;
+        gap: 10px 12px;
+        margin-bottom: 8px;
         align-items: start;
     }
 
+    .student-form .form-row:last-child {
+        margin-bottom: 0;
+    }
+
     .student-form .form-row.names-row {
-        grid-template-columns: 1fr 1fr 1fr 110px;
+        grid-template-columns: 1fr 1fr 1fr 105px;
     }
 
     .student-form .form-row.two-col {
@@ -3326,11 +3343,11 @@ body,
     .student-form .form-group {
         display: flex;
         flex-direction: column;
-        gap: 5px;
+        gap: 3px;
     }
 
     .student-form label {
-        font-size: 12.5px;
+        font-size: 12px;
         font-weight: 500;
         color: #94a3b8;
         letter-spacing: 0.01em;
@@ -3346,9 +3363,9 @@ body,
     .student-form textarea {
         width: 100%;
         box-sizing: border-box;
-        padding: 9px 12px;
-        height: 40px;
-        font-size: 13.5px;
+        padding: 7px 11px;
+        height: 36px;
+        font-size: 13px;
         font-family: inherit;
         color: #e2e8f0;
         background: #0d1424;
@@ -3388,10 +3405,22 @@ body,
         font-weight: 600;
     }
 
+    .student-form .error-message {
+        font-size: 11px;
+        color: #f87171;
+        min-height: 0;
+        line-height: 1.2;
+        margin-top: 1px;
+        display: none;
+    }
+    .student-form .error-message:not(:empty) {
+        display: block;
+    }
+
     /* Modal Buttons */
     .btn-cancel-modal {
-        padding: 9px 22px;
-        font-size: 13.5px;
+        padding: 8px 20px;
+        font-size: 13px;
         font-weight: 600;
         font-family: inherit;
         color: #cbd5e1;
@@ -3410,9 +3439,9 @@ body,
     .btn-submit-modal {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 9px 22px;
-        font-size: 13.5px;
+        gap: 7px;
+        padding: 8px 20px;
+        font-size: 13px;
         font-weight: 700;
         font-family: inherit;
         color: #0f172a;
@@ -3430,7 +3459,7 @@ body,
     }
 
     .btn-submit-modal i {
-        font-size: 13px;
+        font-size: 12px;
     }
 
     @media (max-width: 768px) {

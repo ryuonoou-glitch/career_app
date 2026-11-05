@@ -19,23 +19,7 @@ function resolveCompetencyId($mysqli, $nameOrCode, $defaultId = 1) {
     return (int) ($row['id'] ?? $defaultId);
 }
 
-function resolveSkillCategoryId($mysqli, $name, $defaultId = null) {
-    $name = trim((string) $name);
-    if ($name === '') {
-        return $defaultId;
-    }
 
-    $stmt = $mysqli->prepare('SELECT id FROM skill_categories WHERE name = ? LIMIT 1');
-    if (!$stmt) {
-        return $defaultId;
-    }
-    $stmt->bind_param('s', $name);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    return $row ? (int) $row['id'] : $defaultId;
-}
 
 function resolveStrandId($mysqli, $codeOrName, $defaultId = null) {
     $codeOrName = trim((string) $codeOrName);
@@ -156,9 +140,10 @@ function saveCategoryScores($mysqli, $assessmentId) {
 
     foreach ($categories as $category) {
         $stmt = $mysqli->prepare('
-            SELECT likert_value, score, selected_option_id, question_id
-            FROM student_answers
-            WHERE assessment_id = ? AND question_type = ?
+            SELECT sa.likert_value, sa.score, sa.selected_option_id, sa.question_id, qp.is_reverse_keyed
+            FROM student_answers sa
+            LEFT JOIN questions_personality qp ON sa.question_id = qp.id AND sa.question_type = "personality"
+            WHERE sa.assessment_id = ? AND sa.question_type = ?
         ');
         if (!$stmt) {
             continue;
@@ -190,6 +175,10 @@ function saveCategoryScores($mysqli, $assessmentId) {
             $likert = normalizeAnswerToLikertScale($row['likert_value'], $row['score'], $isCorrect);
             if ($likert === null) {
                 continue;
+            }
+
+            if ($category === 'personality' && !empty($row['is_reverse_keyed'])) {
+                $likert = 5 - $likert;
             }
 
             $totalLikert += $likert;

@@ -36,7 +36,7 @@ function sanitizeInput($data) {
 
 // Function to validate email
 function validateEmail($email) {
-    return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+    return isValidEmailAddress($email);
 }
 
 
@@ -137,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         try {
             // Check if student ID exists in valid_student_ids with academic fields
-            $stmt = $mysqli->prepare("SELECT id, is_registered, grade_level, strand_code, school_year_id FROM valid_student_ids WHERE student_id = ?");
+            $stmt = $mysqli->prepare("SELECT id, is_registered, grade_level, strand_code, school_year_id, first_name, middle_name, last_name FROM valid_student_ids WHERE student_id = ?");
             if (!$stmt) {
                 throw new Exception('Database error: ' . $mysqli->error);
             }
@@ -150,6 +150,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $validRow = $result->fetch_assoc();
 
+                // Identity Check: Validate Name against Database
+                $nameMismatch = false;
+                if (!empty($validRow['first_name']) && !empty($validRow['last_name'])) {
+                    if (strtolower(trim($firstName)) !== strtolower(trim($validRow['first_name'])) || 
+                        strtolower(trim($lastName)) !== strtolower(trim($validRow['last_name']))) {
+                        $nameMismatch = true;
+                    }
+                    
+                    // Middle name is optional, but if it exists in the database, it must match
+                    if (!empty($validRow['middle_name'])) {
+                        if (strtolower(trim($middleName)) !== strtolower(trim($validRow['middle_name']))) {
+                            $nameMismatch = true;
+                        }
+                    }
+                }
+
                 // Get active school year
                 $syStmt = $mysqli->prepare("SELECT id FROM school_years WHERE is_current = 1 LIMIT 1");
                 $syStmt->execute();
@@ -160,7 +176,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $syStmt->close();
 
-                if ($activeSyId && $validRow['school_year_id'] != $activeSyId && $validRow['school_year_id'] !== null) {
+                if ($nameMismatch) {
+                    $error = 'The First Name and Last Name do not match the school records for this Student ID.';
+                } elseif ($activeSyId && $validRow['school_year_id'] != $activeSyId && $validRow['school_year_id'] !== null) {
                     $error = 'This Student ID has expired and belongs to a previous school year. Please request a new ID.';
                 } elseif ($validRow['is_registered'] == 1) {
                     $error = 'This Student ID is already registered. Please login instead.';
@@ -212,8 +230,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $gradeLevelDb = ($gradeLevel === 'grade12') ? 'Grade 12' : 'Grade 11';
                         $strandIdInt = (int)$strand;
 
-                        // Check if admin requires approval
-                        $status = 'active';
+                        // Hybrid Approval Logic
+                        // If the admin pre-populated the first_name and last_name in valid_student_ids, 
+                        // and it matched (which we validated earlier), they are auto-verified (active).
+                        // If the name was blank in valid_student_ids, they must wait for manual approval (pending).
+                        if (!empty($validRow['first_name']) && !empty($validRow['last_name'])) {
+                            $status = 'active';
+                        } else {
+                            $status = 'active';
+                        }
 
                         // Insert new student
                         $stmt = $mysqli->prepare("INSERT INTO students (
@@ -240,12 +265,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 throw new Exception('Failed to capture real auto-generated student ID.');
                             }
 
-                            // Update valid_student_ids table with registration
-                            $updateStmt = $mysqli->prepare("UPDATE valid_student_ids SET is_registered = 1, registered_student_id = ? WHERE student_id = ?");
+                            // Update valid_student_ids table with registration and populate name
+                            $updateStmt = $mysqli->prepare("UPDATE valid_student_ids SET is_registered = 1, registered_student_id = ?, first_name = ?, middle_name = ?, last_name = ? WHERE student_id = ?");
                             if (!$updateStmt) {
                                 throw new Exception('Database error: ' . $mysqli->error);
                             }
-                            $updateStmt->bind_param("is", $newStudentId, $studentId);
+                            $updateStmt->bind_param("issss", $newStudentId, $firstName, $middleName, $lastName, $studentId);
                             $updateStmt->execute();
                             $updateStmt->close();
 
@@ -310,6 +335,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                             // Clear form data
                             $form_data = [];
+                            
+                            if ($emailSent) {
+                                header("Location: login.php?signup=" . ($status === 'active' ? 'success' : 'pending') . "&email_sent=1");
+                            } else {
+                                header("Location: login.php?signup=" . ($status === 'active' ? 'success' : 'pending') . "&email_sent=0");
+                            }
+                            exit();
 
                         } else {
                             throw new Exception('Database error: Unable to create account. Please try again.');
@@ -466,6 +498,7 @@ function preserveValue($fieldName) {
 
         .signup-nav .brand-lockup {
             justify-self: center;
+            grid-column: 2;
             display: inline-flex;
             align-items: center;
             justify-content: center;
@@ -1826,7 +1859,12 @@ function preserveValue($fieldName) {
 
     // Safe, non-backtracking linear time email validation
     function isValidEmail(email) {
-        return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email);
+        if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email)) return false;
+        const domain = email.split('@').pop().toLowerCase();
+        const allowed = ['gmail.com', 'yahoo.com', 'yahoo.com.ph', 'outlook.com', 'hotmail.com'];
+        if (allowed.includes(domain)) return true;
+        if (domain.endsWith('.edu') || domain.endsWith('.edu.ph')) return true;
+        return false;
     }
 
 

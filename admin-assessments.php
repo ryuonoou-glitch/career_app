@@ -287,7 +287,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $allRecommendations = [];
             if ($assessment && !empty($assessment['id'])) {
                 $recStmt = $mysqli->prepare("
-                    SELECT c.course_name, cl.name as cluster_name, r.match_percentage, r.rank
+                    SELECT c.id as course_id, c.course_name, cl.name as cluster_name, r.match_percentage, r.rank
                     FROM recommendations r
                     JOIN courses c ON r.course_id = c.id
                     LEFT JOIN clusters cl ON c.cluster_id = cl.id
@@ -300,11 +300,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $recStmt->execute();
                     $recRes = $recStmt->get_result();
                     while ($rRow = $recRes->fetch_assoc()) {
+                        // Fetch schools for this course
+                        $schools = [];
+                        $schoolStmt = $mysqli->prepare("
+                            SELECT s.id, s.name, s.website
+                            FROM course_schools cs
+                            JOIN schools s ON cs.school_id = s.id
+                            WHERE cs.course_id = ?
+                        ");
+                        if ($schoolStmt) {
+                            $schoolStmt->bind_param('i', $rRow['course_id']);
+                            $schoolStmt->execute();
+                            $schoolRes = $schoolStmt->get_result();
+                            while ($sRow = $schoolRes->fetch_assoc()) {
+                                $schools[] = $sRow;
+                            }
+                            $schoolStmt->close();
+                        }
+                        
                         $recItem = [
                             'rank' => (int)$rRow['rank'],
+                            'course_id' => $rRow['course_id'],
                             'course_name' => $rRow['course_name'],
                             'cluster_name' => $rRow['cluster_name'] ?? 'N/A',
-                            'match_percentage' => (float)$rRow['match_percentage']
+                            'match_percentage' => (float)$rRow['match_percentage'],
+                            'schools' => $schools
                         ];
                         $allRecommendations[] = $recItem;
                         if (!$topRecommendation) {
@@ -1146,19 +1166,36 @@ if ($result) {
                             let html = '';
                             recs.forEach((r, idx) => {
                                 const badgeColor = idx === 0 ? 'background:linear-gradient(135deg, #f59e0b, #d97706); color:#0f172a;' : (idx === 1 ? 'background:linear-gradient(135deg, #3b82f6, #2563eb); color:#fff;' : 'background:rgba(255,255,255,0.1); color:#cbd5e1;');
+                                let schoolsHtml = '';
+                                if (r.schools && r.schools.length > 0) {
+                                    schoolsHtml = '<div style="margin-top:0.8rem; padding-top:0.8rem; border-top:1px solid rgba(255,255,255,0.08); display:none;" id="schools-' + r.course_id + '">';
+                                    schoolsHtml += '<h4 style="font-size:0.75rem; color:#94a3b8; margin:0 0 0.5rem 0; text-transform:uppercase;">Offered At</h4>';
+                                    schoolsHtml += '<ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:0.4rem;">';
+                                    r.schools.forEach(s => {
+                                        schoolsHtml += `<li style="font-size:0.85rem;"><a href="${s.website || '#'}" target="_blank" style="color:#38bdf8; text-decoration:none;">${s.name}</a></li>`;
+                                    });
+                                    schoolsHtml += '</ul></div>';
+                                }
+
                                 html += `
-                                    <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 0.85rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem;">
-                                        <div style="display: flex; align-items: center; gap: 0.8rem;">
-                                            <span style="${badgeColor} width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; flex-shrink: 0;">#${r.rank || (idx + 1)}</span>
-                                            <div>
-                                                <strong style="color: #ffffff; font-size: 0.95rem; display: block; line-height: 1.3;">${r.course_name}</strong>
-                                                <span style="color: #94a3b8; font-size: 0.8rem;">${r.cluster_name}</span>
+                                    <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 0.85rem 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                                        <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+                                            <div style="display: flex; align-items: center; gap: 0.8rem;">
+                                                <span style="${badgeColor} width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; flex-shrink: 0;">#${r.rank || (idx + 1)}</span>
+                                                <div>
+                                                    <strong style="color: #ffffff; font-size: 0.95rem; display: block; line-height: 1.3;">${r.course_name}</strong>
+                                                    <span style="color: #94a3b8; font-size: 0.8rem;">${r.cluster_name}</span>
+                                                </div>
+                                            </div>
+                                            <div style="text-align: right; flex-shrink: 0; display:flex; align-items:center; gap:1rem;">
+                                                <div style="text-align:right;">
+                                                    <span style="font-size: 0.75rem; color: #94a3b8; display: block; text-transform: uppercase;">Match</span>
+                                                    <strong style="color: #4ade80; font-size: 1rem;">${Number(r.match_percentage).toFixed(2)}%</strong>
+                                                </div>
+                                                <button onclick="document.getElementById('schools-${r.course_id}').style.display = document.getElementById('schools-${r.course_id}').style.display === 'none' ? 'block' : 'none'" class="btn-outline-primary" style="font-size:0.75rem; padding:4px 8px; text-decoration:none; color:#38bdf8; border: 1px solid rgba(56,189,248,0.4); border-radius:4px; display:inline-block; transition:all 0.2s; background:transparent; cursor:pointer;">View Schools <i class="fa-solid fa-chevron-down"></i></button>
                                             </div>
                                         </div>
-                                        <div style="text-align: right; flex-shrink: 0;">
-                                            <span style="font-size: 0.75rem; color: #94a3b8; display: block; text-transform: uppercase;">Match</span>
-                                            <strong style="color: #4ade80; font-size: 1rem;">${Number(r.match_percentage).toFixed(2)}%</strong>
-                                        </div>
+                                        ${schoolsHtml}
                                     </div>
                                 `;
                             });
@@ -1176,6 +1213,13 @@ if ($result) {
                 sicActions.innerHTML = '';
                 
                 if (assessment && assessment.status === 'completed') {
+                    const reviewBtn = document.createElement('a');
+                    reviewBtn.className = 'btn-outline-primary';
+                    reviewBtn.href = 'counselor_review.php?id=' + assessment.id;
+                    reviewBtn.style.cssText = 'font-size: 0.85rem; padding: 8px 16px; border-radius: 6px; font-weight: 600; width: 100%; margin-bottom: 10px; cursor: pointer; text-align: center; border: 1px solid rgba(245,158,11,0.4); background: rgba(245,158,11,0.15); color: #fbbf24; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;';
+                    reviewBtn.innerHTML = '<i class="fa-solid fa-stamp"></i> Review / Return Assessment';
+                    sicActions.appendChild(reviewBtn);
+
                     const recalcBtn = document.createElement('button');
                     recalcBtn.id = 'recalculateBtn';
                     recalcBtn.className = 'btn-primary';
@@ -1258,7 +1302,7 @@ if ($result) {
                         questionTypeAttr = 'likert';
                         const selectedVal = Number(answer.likert_value ?? answer.score);
                         let circlesHtml = '';
-                        for (let i = 1; i <= 5; i++) {
+                        for (let i = 1; i <= 4; i++) {
                             const isSelected = i === selectedVal ? 'selected' : '';
                             circlesHtml += `<div class="likert-circle ${isSelected}">${i}</div>`;
                         }

@@ -51,6 +51,7 @@
 
     html {
         overflow-x: hidden;
+        scroll-behavior: smooth;
     }
 
     body {
@@ -177,10 +178,15 @@
         font-size: 0.9rem;
     }
 
-    .nav-link:hover {
+    .nav-link:hover,
+    .nav-link:focus,
+    .nav-link:focus-visible,
+    .nav-link:active,
+    .nav-link.active {
         color: #fbbf24;
-        background: rgba(251, 191, 36, 0.1);
+        background: rgba(251, 191, 36, 0.15);
         transform: translateY(-2px);
+        outline: none;
     }
 
     .nav-link::after {
@@ -195,9 +201,14 @@
         transform: translateX(-50%);
     }
 
-    .nav-link:hover::after {
+    .nav-link:hover::after,
+    .nav-link:focus::after,
+    .nav-link:focus-visible::after,
+    .nav-link:active::after,
+    .nav-link.active::after {
         width: 80%;
     }
+
 
     .nav-btn {
         padding: 0.4rem 0.875rem;
@@ -2337,8 +2348,8 @@
         }
 
         .summary-cards {
-            grid-template-columns: 1fr;
-            gap: 1rem;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
         }
 
         .action-buttons {
@@ -2363,7 +2374,32 @@
         }
 
         .card-value {
-            font-size: 1.75rem;
+            font-size: 1.5rem;
+        }
+
+        .summary-card {
+            padding: 1rem;
+            gap: 0.75rem;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .card-icon {
+            width: 44px;
+            height: 44px;
+            font-size: 1.1rem;
+            border-radius: 10px;
+        }
+
+        .card-content h3 {
+            font-size: 0.78rem;
+            margin-bottom: 0.25rem;
+        }
+    }
+
+    @media (max-width: 360px) {
+        .summary-cards {
+            grid-template-columns: 1fr;
         }
     }
 
